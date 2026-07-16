@@ -5,7 +5,11 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'teacher'], default: 'teacher' },
+  role: {
+  type: String,
+  enum: ['admin', 'trainer', 'counselor'],
+  required: true
+},
   subjects: [{ type: String }], // assigned subjects (for teachers)
 }, { timestamps: true });
 
