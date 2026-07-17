@@ -6,12 +6,24 @@ const studentSchema = new mongoose.Schema(
     rollNumber: { type: String, required: true, unique: true, trim: true },
     email: { type: String, trim: true },
     subjects: [{ type: String, trim: true }],
-    // Projects this student is enrolled in
     projects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Project" }],
-    // Additional student info
+    batches: [{ type: mongoose.Schema.Types.ObjectId, ref: "Batch" }],
     phone: { type: String, trim: true },
     class: { type: String, trim: true },
     section: { type: String, trim: true },
+    // Track who added the student
+    addedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    addedByRole: {
+      type: String,
+      enum: ["admin", "counsellor", "teacher"],
+      required: true,
+    },
+    counsellor: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    teacher: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },
 );

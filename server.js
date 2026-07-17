@@ -11,7 +11,8 @@ const counsellorRoutes = require("./routes/counsellor");
 const studentRoutes = require("./routes/student");
 const attendanceRoutes = require("./routes/attendance");
 const evaluationRoutes = require("./routes/evaluation");
-const projectRoutes = require("./routes/projects"); // Add this
+const projectRoutes = require("./routes/projects");
+const batchRoutes = require("./routes/batches"); // Add this
 
 const app = express();
 
@@ -30,7 +31,8 @@ app.use("/api/counsellor", counsellorRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/evaluations", evaluationRoutes);
-app.use("/api/projects", projectRoutes); // Add this
+app.use("/api/projects", projectRoutes);
+app.use("/api/batches", batchRoutes); // Add this
 
 // MongoDB Connection
 mongoose
