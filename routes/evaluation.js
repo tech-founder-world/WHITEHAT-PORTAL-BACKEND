@@ -1,118 +1,217 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Evaluation = require('../models/Evaluation');
-const Student = require('../models/Student');
-const { protect } = require('../middleware/auth');
+const Evaluation = require("../models/Evaluation");
+const Project = require("../models/Project");
+const Student = require("../models/Student");
+const User = require("../models/User");
+const { protect } = require("../middleware/auth");
 
 router.use(protect);
 
-// GET /api/evaluations?subject=&date=&studentId=
-router.get('/', async (req, res) => {
+// GET /api/evaluations - Get evaluations with filters
+router.get("/", async (req, res) => {
   try {
-    const { subject, date, studentId } = req.query;
+    const { projectId, studentId, subject, date } = req.query;
     const filter = {};
+
+    if (projectId) filter.project = projectId;
+    if (studentId) filter.student = studentId;
+    if (subject) filter.subject = subject;
     if (date) filter.date = date;
 
-    // Subject scoping — teachers restricted to their own subjects
-    if (req.user.role === 'teacher') {
-      if (subject) {
-        if (!req.user.subjects.includes(subject))
-          return res.status(403).json({ message: 'Not assigned to this subject' });
-        filter.subject = subject;
+    // Admin can see everything
+    if (req.user.role === "admin") {
+      // No restrictions
+    }
+    // Teacher - only see evaluations from their projects
+    else if (req.user.role === "teacher") {
+      const teacherProjects = await Project.find({
+        teacher: req.user._id,
+      }).select("_id");
+      const projectIds = teacherProjects.map((p) => p._id);
+
+      if (projectId) {
+        if (!projectIds.some((id) => id.toString() === projectId.toString())) {
+          return res
+            .status(403)
+            .json({ message: "Access denied to this project" });
+        }
+        filter.project = projectId;
       } else {
-        filter.subject = { $in: req.user.subjects };
+        filter.project = { $in: projectIds };
       }
-    } else {
-      // Admin: filter by subject only if explicitly passed
-      if (subject) filter.subject = subject;
+    }
+    // Counsellor - only see evaluations for their assigned students
+    else if (req.user.role === "counsellor") {
+      const counsellor = await User.findById(req.user._id).populate("students");
+      const studentIds = counsellor.students.map((s) => s._id);
+
+      if (studentId) {
+        if (!studentIds.some((id) => id.toString() === studentId.toString())) {
+          return res
+            .status(403)
+            .json({ message: "Student not assigned to you" });
+        }
+        filter.student = studentId;
+      } else {
+        filter.student = { $in: studentIds };
+      }
     }
 
-    // Student scoping — when subject is set, restrict to enrolled students only
-    const resolvedSubject = subject || null;
-    if (resolvedSubject) {
-      const enrolled = await Student.find({ subjects: resolvedSubject }).select('_id');
-      const ids = enrolled.map(s => s._id);
-      filter.student = studentId ? studentId : { $in: ids };
-    } else if (studentId) {
-      filter.student = studentId;
-    }
-
-    const records = await Evaluation.find(filter)
-      .populate('student', 'name rollNumber subjects')
-      .populate('markedBy', 'name')
+    const evaluations = await Evaluation.find(filter)
+      .populate("student", "name rollNumber")
+      .populate("project", "name subject")
+      .populate("markedBy", "name")
       .sort({ date: -1 });
-    res.json(records);
+
+    res.json(evaluations);
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error("Error fetching evaluations:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// POST /api/evaluations/bulk — save evaluations for enrolled students on any date
-router.post('/bulk', async (req, res) => {
+// POST /api/evaluations/bulk - Save evaluations for project students
+router.post("/bulk", async (req, res) => {
   try {
-    const { records, subject, date } = req.body;
-    if (!records || !subject || !date)
-      return res.status(400).json({ message: 'Records, subject, and date required' });
+    const { records, projectId, date } = req.body;
 
-    if (req.user.role === 'teacher' && !req.user.subjects.includes(subject))
-      return res.status(403).json({ message: 'Not assigned to this subject' });
+    if (!records || !projectId || !date) {
+      return res
+        .status(400)
+        .json({ message: "Records, projectId, and date required" });
+    }
 
-    const enrolled = await Student.find({ subjects: subject }).select('_id');
-    const enrolledIds = new Set(enrolled.map(s => s._id.toString()));
+    // Get project and verify access
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // Check access
+    if (req.user.role === "admin") {
+      // Admin can evaluate any project
+    } else if (req.user.role === "teacher") {
+      if (project.teacher.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          message: "Access denied - You can only evaluate your own projects",
+        });
+      }
+    } else {
+      return res.status(403).json({
+        message: "Access denied - Only teachers can evaluate projects",
+      });
+    }
+
+    // Get project student IDs
+    const projectStudentIds = project.students.map((id) => id.toString());
 
     const results = [];
     for (const rec of records) {
-      if (!enrolledIds.has(rec.studentId.toString())) continue;
-      if (rec.score === null || rec.score === undefined) continue;
+      // Only evaluate students in this project
+      if (!projectStudentIds.includes(rec.studentId.toString())) {
+        continue;
+      }
 
-      const result = await Evaluation.findOneAndUpdate(
-        { student: rec.studentId, subject, date },
+      const evaluation = await Evaluation.findOneAndUpdate(
         {
-          score: rec.score,
-          maxScore: rec.maxScore || 100,
-          remarks: rec.remarks || '',
-          markedBy: req.user._id,
+          student: rec.studentId,
+          project: projectId,
+          date: date,
         },
-        { upsert: true, new: true }
-      ).populate('student', 'name rollNumber');
-      results.push(result);
+        {
+          student: rec.studentId,
+          project: projectId,
+          subject: project.subject,
+          date: date,
+          score: rec.score,
+          maxScore: rec.maxScore || project.maxScore || 100,
+          remarks: rec.remarks || "",
+          markedBy: req.user._id,
+          evaluationType: rec.evaluationType || "project",
+        },
+        { upsert: true, new: true },
+      )
+        .populate("student", "name rollNumber")
+        .populate("project", "name");
+
+      results.push(evaluation);
     }
-    res.json(results);
+
+    res.json({
+      message: `Saved ${results.length} evaluations`,
+      records: results,
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error("Error saving evaluations:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// PUT /api/evaluations/:id
-router.put('/:id', async (req, res) => {
+// PUT /api/evaluations/:id - Update a single evaluation
+router.put("/:id", async (req, res) => {
   try {
     const { score, maxScore, remarks } = req.body;
-    const record = await Evaluation.findById(req.params.id);
-    if (!record) return res.status(404).json({ message: 'Record not found' });
+    const evaluation = await Evaluation.findById(req.params.id);
+    if (!evaluation) {
+      return res.status(404).json({ message: "Evaluation not found" });
+    }
 
-    if (req.user.role === 'teacher' && !req.user.subjects.includes(record.subject))
-      return res.status(403).json({ message: 'Not assigned to this subject' });
+    // Check access
+    if (req.user.role === "admin") {
+      // Admin can update any evaluation
+    } else if (req.user.role === "teacher") {
+      const project = await Project.findById(evaluation.project);
+      if (!project || project.teacher.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          message: "Access denied - You can only update your own evaluations",
+        });
+      }
+    } else {
+      return res.status(403).json({ message: "Access denied" });
+    }
 
-    Object.assign(record, { score, maxScore, remarks });
-    await record.save();
-    await record.populate('student', 'name rollNumber');
-    res.json(record);
+    evaluation.score = score;
+    evaluation.maxScore = maxScore;
+    evaluation.remarks = remarks;
+    await evaluation.save();
+    await evaluation.populate("student", "name rollNumber");
+    await evaluation.populate("project", "name");
+
+    res.json(evaluation);
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error updating evaluation:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// DELETE /api/evaluations/:id
-router.delete('/:id', async (req, res) => {
+// DELETE /api/evaluations/:id - Delete an evaluation
+router.delete("/:id", async (req, res) => {
   try {
-    const record = await Evaluation.findById(req.params.id);
-    if (!record) return res.status(404).json({ message: 'Not found' });
-    if (req.user.role === 'teacher' && !req.user.subjects.includes(record.subject))
-      return res.status(403).json({ message: 'Not assigned to this subject' });
-    await record.deleteOne();
-    res.json({ message: 'Deleted' });
+    const evaluation = await Evaluation.findById(req.params.id);
+    if (!evaluation) {
+      return res.status(404).json({ message: "Evaluation not found" });
+    }
+
+    // Check access
+    if (req.user.role === "admin") {
+      // Admin can delete any evaluation
+    } else if (req.user.role === "teacher") {
+      const project = await Project.findById(evaluation.project);
+      if (!project || project.teacher.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          message: "Access denied - You can only delete your own evaluations",
+        });
+      }
+    } else {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    await evaluation.deleteOne();
+    res.json({ message: "Evaluation deleted successfully" });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error deleting evaluation:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 

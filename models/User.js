@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true },
     role: {
       type: String,
-      enum: ["admin", "teacher", "counsellor"], // Changed to match frontend
+      enum: ["admin", "teacher", "counsellor"],
       required: true,
     },
     subjects: [{ type: String }], // assigned subjects (for teachers)

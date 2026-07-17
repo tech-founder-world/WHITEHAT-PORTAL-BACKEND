@@ -3,13 +3,15 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
 
+// Import routes
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const teacherRoutes = require("./routes/teacher");
-const counsellorRoutes = require("./routes/counsellor"); // Add this
+const counsellorRoutes = require("./routes/counsellor");
 const studentRoutes = require("./routes/student");
 const attendanceRoutes = require("./routes/attendance");
 const evaluationRoutes = require("./routes/evaluation");
+const projectRoutes = require("./routes/projects"); // Add this
 
 const app = express();
 
@@ -18,17 +20,17 @@ app.use(express.json());
 
 // Routes
 app.get("/", (req, res) => {
-  console.log("Root route hit");
   res.send("WhiteHat API Working");
 });
 
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/teacher", teacherRoutes);
-app.use("/api/counsellor", counsellorRoutes); // Add this
+app.use("/api/counsellor", counsellorRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/evaluations", evaluationRoutes);
+app.use("/api/projects", projectRoutes); // Add this
 
 // MongoDB Connection
 mongoose
