@@ -15,6 +15,7 @@ router.get("/teachers", async (req, res) => {
     const teachers = await User.find({ role: "teacher" }).select("-password");
     res.json(teachers);
   } catch (err) {
+    console.error("Error fetching teachers:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -96,7 +97,7 @@ router.get("/counsellors", async (req, res) => {
 // POST /api/admin/counsellors — create counsellor account
 router.post("/counsellors", async (req, res) => {
   try {
-    const { name, email, password, specialization, students } = req.body;
+    const { name, email, password, specialization } = req.body;
     if (!name || !email || !password)
       return res
         .status(400)
@@ -106,13 +107,14 @@ router.post("/counsellors", async (req, res) => {
     if (existing)
       return res.status(400).json({ message: "Email already in use" });
 
+    // REMOVED: students field - admin does NOT assign students to counsellor
     const counsellor = await User.create({
       name,
       email,
       password,
       role: "counsellor",
       specialization: specialization || "",
-      students: students || [],
+      students: [], // Always empty - students are added by counsellor themselves
     });
     const { password: _, ...counsellorData } = counsellor.toObject();
     res.status(201).json(counsellorData);
@@ -125,12 +127,13 @@ router.post("/counsellors", async (req, res) => {
 // PUT /api/admin/counsellors/:id — update counsellor
 router.put("/counsellors/:id", async (req, res) => {
   try {
-    const { name, email, specialization, students, password } = req.body;
-    const update = { name, email, specialization, students };
+    const { name, email, specialization, password } = req.body;
+    const update = { name, email, specialization };
     if (password) {
       const bcrypt = require("bcryptjs");
       update.password = await bcrypt.hash(password, 10);
     }
+    // REMOVED: students from update - counsellor manages their own students
     const counsellor = await User.findByIdAndUpdate(req.params.id, update, {
       new: true,
     })
@@ -152,6 +155,102 @@ router.delete("/counsellors/:id", async (req, res) => {
     res.json({ message: "Counsellor deleted" });
   } catch (err) {
     console.error("Error deleting counsellor:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ===== ASSIGN STUDENT TO TEACHER =====
+
+// GET /api/admin/students - Get all students with filters (for admin)
+router.get("/students", async (req, res) => {
+  try {
+    const { search, addedBy } = req.query;
+    let filter = {};
+
+    // Search by name or roll number
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { rollNumber: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // Filter by who added the student
+    if (addedBy) {
+      filter.addedBy = addedBy;
+    }
+
+    const students = await Student.find(filter)
+      .populate("addedBy", "name email role")
+      .populate("counsellor", "name email")
+      .sort({ createdAt: -1 });
+
+    res.json(students);
+  } catch (err) {
+    console.error("Error fetching students:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/admin/students/assign-teacher - Assign student to teacher
+router.post("/students/assign-teacher", async (req, res) => {
+  try {
+    const { studentId, teacherId } = req.body;
+
+    if (!studentId || !teacherId) {
+      return res
+        .status(400)
+        .json({ message: "Student ID and Teacher ID required" });
+    }
+
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    const teacher = await User.findById(teacherId);
+    if (!teacher || teacher.role !== "teacher") {
+      return res.status(404).json({ message: "Teacher not found" });
+    }
+
+    // Update student with teacher
+    student.teacher = teacherId;
+    await student.save();
+
+    // Add student to teacher's students list
+    await User.findByIdAndUpdate(teacherId, {
+      $addToSet: { students: studentId },
+    });
+
+    await student.populate("addedBy", "name email role");
+    await student.populate("counsellor", "name email");
+    await student.populate("teacher", "name email");
+
+    res.json({
+      message: "Student assigned to teacher successfully",
+      student,
+    });
+  } catch (err) {
+    console.error("Error assigning teacher:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/admin/teachers/:id/students - Get students assigned to a teacher
+router.get("/teachers/:id/students", async (req, res) => {
+  try {
+    const teacher = await User.findById(req.params.id).populate(
+      "students",
+      "name rollNumber email subjects",
+    );
+
+    if (!teacher || teacher.role !== "teacher") {
+      return res.status(404).json({ message: "Teacher not found" });
+    }
+
+    res.json(teacher.students || []);
+  } catch (err) {
+    console.error("Error fetching teacher students:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
