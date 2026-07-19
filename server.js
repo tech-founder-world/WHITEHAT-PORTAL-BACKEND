@@ -38,13 +38,153 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/evaluations', evaluationRoutes);
 app.use('/api/placement', placementRoutes);
 
-// ============ TEMPORARY PROJECTS ROUTE ============
-app.get('/api/projects', (req, res) => {
-  // If you don't have a Projects database model yet, return an empty array
-  res.json([]);
-  // If you DO have a model, comment out the line above and use this:
-  // const projects = await Project.find({});
-  // res.json(projects);
+// ============ PROJECTS ROUTES ============
+const Project = require('./models/Project'); 
+
+// 1. GET: Fetch all projects (Populates the teacher's name!)
+app.get('/api/projects', async (req, res) => {
+  try {
+    // ✅ The key fix: .populate('teacher', 'name')
+    const projects = await Project.find()
+      .populate('teacher', 'name email') 
+      .sort({ createdAt: -1 });
+    res.json(projects);
+  } catch (error) {
+    console.error('❌ Error fetching projects:', error.message);
+    res.status(500).json({ message: 'Server error fetching projects' });
+  }
+});
+
+// 1.5 GET: Fetch a single project by ID (For Evaluations page)
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id)
+      .populate('teacher', 'name email')
+      .populate('students', 'name rollNumber');
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    res.json(project);
+  } catch (error) {
+    console.error('❌ Error fetching project by ID:', error.message);
+    res.status(500).json({ message: 'Server error fetching project' });
+  }
+});
+
+// 2. POST: Create a new project (Rejects Invalid IDs!)
+app.post('/api/projects', async (req, res) => {
+  try {
+    let teacherId = req.body.teacher;
+    
+    // 🛑 BLOCK: If the ID is invalid (not 24 hex chars), reject it immediately!
+    if (teacherId && !mongoose.Types.ObjectId.isValid(teacherId)) {
+       return res.status(400).json({ 
+         success: false, 
+         message: "Invalid Teacher ID. Please select a valid teacher from the dropdown." 
+       });
+    }
+
+    const newProject = new Project({
+      name: req.body.name,
+      description: req.body.description || '',
+      teacher: teacherId,
+      students: req.body.students || [],
+      subject: req.body.subject,
+      startDate: req.body.startDate || '',
+      endDate: req.body.endDate || '',
+      status: req.body.status || 'active',
+      maxScore: req.body.maxScore || 100
+    });
+
+    const savedProject = await newProject.save();
+    
+    // ✅ Return the project with the teacher name populated immediately
+    const populatedProject = await Project.findById(savedProject._id)
+      .populate('teacher', 'name email');
+
+    res.status(201).json({
+      success: true,
+      message: "Project created successfully",
+      project: populatedProject
+    });
+
+  } catch (error) {
+    console.error("❌ Server Error creating project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 3. PUT: Update an existing project
+app.put('/api/projects/:id', async (req, res) => {
+  try {
+    let teacherId = req.body.teacher;
+    if (teacherId && !mongoose.Types.ObjectId.isValid(teacherId)) {
+       return res.status(400).json({ success: false, message: "Invalid Teacher ID." });
+    }
+
+    const updatedProject = await Project.findByIdAndUpdate(
+      req.params.id,
+      {
+        name: req.body.name,
+        description: req.body.description || '',
+        teacher: teacherId,
+        students: req.body.students || [],
+        subject: req.body.subject,
+        startDate: req.body.startDate || '',
+        endDate: req.body.endDate || '',
+        status: req.body.status || 'active',
+        maxScore: req.body.maxScore || 100
+      },
+      { new: true, runValidators: true }
+    ).populate('teacher', 'name email'); // Populate on update too
+
+    if (!updatedProject) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    res.json({ success: true, message: "Project updated successfully", project: updatedProject });
+
+  } catch (error) {
+    console.error("❌ Error updating project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 4. DELETE: Delete a project
+app.delete('/api/projects/:id', async (req, res) => {
+  try {
+    const deletedProject = await Project.findByIdAndDelete(req.params.id);
+    if (!deletedProject) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    res.json({ success: true, message: "Project deleted successfully" });
+  } catch (error) {
+    console.error("❌ Error deleting project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 5. POST: Add students to an existing project
+app.post('/api/projects/:id/students', async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    const newStudents = req.body.studentIds || [];
+    newStudents.forEach(id => {
+      if (!project.students.includes(id)) {
+        project.students.push(id);
+      }
+    });
+
+    await project.save();
+    res.json({ success: true, message: "Students added successfully", project });
+
+  } catch (error) {
+    console.error("❌ Error adding students:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 // MongoDB Connection - SINGLE CONNECTION
