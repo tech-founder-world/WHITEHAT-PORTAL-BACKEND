@@ -14,6 +14,7 @@
     "googleapis": "^173.0.0",
     "jsonwebtoken": "^9.0.0",
     "mongoose": "^7.3.1",
+    "nanoid": "^3.3.16",
     "shortid": "^2.2.17"
   },
   "devDependencies": {

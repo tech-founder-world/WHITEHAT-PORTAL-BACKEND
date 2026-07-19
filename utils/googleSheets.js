@@ -1,25 +1,27 @@
-// utils/googleSheets.js
+// backend/utils/googleSheets.js
 const { google } = require('googleapis');
+const path = require('path');
 
-// Initialize Google Sheets API
+// ✅ LOAD CREDENTIALS DIRECTLY FROM THE JSON FILE
+// This bypasses all .env formatting issues completely.
 const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json', // Download this from Google Cloud Console
+  keyFile: path.join(__dirname, '../credentials.json'),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
 
 async function addToSheet(application, placementTitle) {
-  try {
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    if (!spreadsheetId) {
-      console.log('Google Sheet ID not configured, skipping sheet update');
-      return;
-    }
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  
+  if (!spreadsheetId) {
+    console.log('❌ Google Sheet ID not configured in .env. Skipping.');
+    return;
+  }
 
-    // Prepare data for Google Sheets
+  try {
     const values = [[
-      new Date().toISOString(),
+      new Date().toISOString().split('T')[0],
       placementTitle || 'N/A',
       application.studentName,
       application.studentEmail,
@@ -29,57 +31,35 @@ async function addToSheet(application, placementTitle) {
       application.year,
       application.semester,
       application.cgpa,
-      application.skills.join(', '),
+      (application.skills || []).join(', '),
       application.experience || 'N/A',
       application.resumeLink || 'N/A',
       application.additionalInfo || 'N/A'
     ]];
 
-    // Get the current sheet data to find the next empty row
-    const response = await sheets.spreadsheets.values.get({
+    await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'Sheet1!A:A',
-    });
-
-    const rows = response.data.values || [];
-    const nextRow = rows.length + 1;
-
-    // Append data to Google Sheet
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `Sheet1!A${nextRow}`,
+      range: 'Sheet1!A:N',
       valueInputOption: 'USER_ENTERED',
       resource: { values },
     });
 
-    console.log('Data added to Google Sheet successfully');
+    console.log(`✅ Added ${application.studentName} to Google Sheet!`);
   } catch (error) {
-    console.error('Error adding to Google Sheet:', error.message);
-    // Don't throw error - we want the application to save even if sheet fails
+    console.error('❌ Error adding to Google Sheet:', error.message);
   }
 }
 
-// Function to create header row in Google Sheet
 async function initializeSheet() {
-  try {
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    if (!spreadsheetId) return;
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  
+  if (!spreadsheetId) return;
 
+  try {
     const headers = [[
-      'Application Date',
-      'Placement Title',
-      'Student Name',
-      'Student Email',
-      'Student Phone',
-      'Student ID',
-      'Branch',
-      'Year',
-      'Semester',
-      'CGPA',
-      'Skills',
-      'Experience',
-      'Resume Link',
-      'Additional Info'
+      'Date', 'Placement', 'Student Name', 'Email', 'Phone', 'Student ID',
+      'Branch', 'Year', 'Semester', 'CGPA', 'Skills', 'Experience',
+      'Resume Link', 'Additional Info'
     ]];
 
     await sheets.spreadsheets.values.update({
@@ -88,10 +68,9 @@ async function initializeSheet() {
       valueInputOption: 'USER_ENTERED',
       resource: { values: headers },
     });
-
-    console.log('Google Sheet headers initialized');
+    console.log('✅ Google Sheet initialized with headers.');
   } catch (error) {
-    console.error('Error initializing Google Sheet:', error.message);
+    console.error('❌ Error initializing Google Sheet:', error.message);
   }
 }
 

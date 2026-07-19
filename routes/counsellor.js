@@ -1,9 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
-const Student = require("../models/Student");
 const { protect } = require("../middleware/auth");
 
+// Apply protect middleware to all routes in this file
 router.use(protect);
 
 // GET /api/counsellor/students — get counsellor's assigned students

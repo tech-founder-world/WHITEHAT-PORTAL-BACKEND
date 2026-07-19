@@ -1,4 +1,3 @@
-// routes/placement.js
 const express = require('express');
 const router = express.Router();
 const Placement = require('../models/Placement');
@@ -12,14 +11,7 @@ router.get('/test', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Placement routes are working!',
-    timestamp: new Date().toISOString(),
-    routes: {
-      test: 'GET /api/placement/test',
-      create: 'POST /api/placement/create (admin)',
-      all: 'GET /api/placement/all (admin)',
-      public: 'GET /api/placement/public/:formLink',
-      submit: 'POST /api/placement/public/submit'
-    }
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -28,6 +20,10 @@ router.get('/test', (req, res) => {
 // Create a new placement form (Admin only)
 router.post('/create', protect, adminOnly, async (req, res) => {
   try {
+    console.log('📝 Create placement route hit!');
+    console.log('User:', req.user);
+    console.log('Body:', req.body);
+    
     const { 
       formTitle, 
       description, 
@@ -84,6 +80,7 @@ router.post('/create', protect, adminOnly, async (req, res) => {
 // Get all placements (Admin)
 router.get('/all', protect, adminOnly, async (req, res) => {
   try {
+    console.log('📋 Get all placements hit');
     const placements = await Placement.find()
       .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
@@ -106,92 +103,10 @@ router.get('/all', protect, adminOnly, async (req, res) => {
   }
 });
 
-// Get a specific placement (Admin)
-router.get('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    const placement = await Placement.findById(req.params.id)
-      .populate('createdBy', 'name email');
-    
-    if (!placement) {
-      return res.status(404).json({ message: 'Placement not found' });
-    }
-
-    res.json(placement);
-  } catch (error) {
-    console.error('Error fetching placement:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Update placement (Admin)
-router.put('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    const { 
-      formTitle, 
-      description, 
-      companyName, 
-      jobRole,
-      jobLocation,
-      salaryPackage,
-      eligibilityCriteria,
-      expiryDate,
-      isActive 
-    } = req.body;
-
-    const placement = await Placement.findById(req.params.id);
-    if (!placement) {
-      return res.status(404).json({ message: 'Placement not found' });
-    }
-
-    // Update fields
-    if (formTitle) placement.formTitle = formTitle;
-    if (description) placement.description = description;
-    if (companyName) placement.companyName = companyName;
-    if (jobRole) placement.jobRole = jobRole;
-    if (jobLocation) placement.jobLocation = jobLocation;
-    if (salaryPackage) placement.salaryPackage = salaryPackage;
-    if (eligibilityCriteria) placement.eligibilityCriteria = eligibilityCriteria;
-    if (expiryDate) placement.expiryDate = expiryDate;
-    if (isActive !== undefined) placement.isActive = isActive;
-
-    await placement.save();
-
-    res.json({
-      success: true,
-      message: 'Placement updated successfully',
-      placement
-    });
-  } catch (error) {
-    console.error('Error updating placement:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Delete placement (Admin)
-router.delete('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    const placement = await Placement.findById(req.params.id);
-    if (!placement) {
-      return res.status(404).json({ message: 'Placement not found' });
-    }
-
-    // Delete all associated applications
-    await PlacementApplication.deleteMany({ placementForm: req.params.id });
-    await placement.deleteOne();
-
-    res.json({
-      success: true,
-      message: 'Placement and all applications deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting placement:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
 // Get all applications for a placement (Admin)
 router.get('/applications/:placementId', protect, adminOnly, async (req, res) => {
   try {
+    console.log('📋 Get applications for placement:', req.params.placementId);
     const { placementId } = req.params;
     
     const placement = await Placement.findById(placementId);
@@ -217,6 +132,7 @@ router.get('/applications/:placementId', protect, adminOnly, async (req, res) =>
 // Update application status (Admin)
 router.put('/applications/:applicationId/status', protect, adminOnly, async (req, res) => {
   try {
+    console.log('📝 Update application status:', req.params.applicationId);
     const { applicationId } = req.params;
     const { status, comments } = req.body;
 
@@ -244,11 +160,35 @@ router.put('/applications/:applicationId/status', protect, adminOnly, async (req
   }
 });
 
+// Delete placement (Admin)
+router.delete('/:id', protect, adminOnly, async (req, res) => {
+  try {
+    console.log('🗑️ Delete placement:', req.params.id);
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement not found' });
+    }
+
+    // Delete all associated applications
+    await PlacementApplication.deleteMany({ placementForm: req.params.id });
+    await placement.deleteOne();
+
+    res.json({
+      success: true,
+      message: 'Placement and all applications deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting placement:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ============ PUBLIC ROUTES ============
 
 // Get placement form by link (Public)
 router.get('/public/:formLink', async (req, res) => {
   try {
+    console.log('📋 Get public placement:', req.params.formLink);
     const { formLink } = req.params;
     
     const placement = await Placement.findOne({ 
@@ -290,6 +230,7 @@ router.get('/public/:formLink', async (req, res) => {
 // Submit application to placement (Public)
 router.post('/public/submit', async (req, res) => {
   try {
+    console.log('📝 Submit application hit!');
     const {
       placementId,
       studentName,
@@ -361,6 +302,75 @@ router.post('/public/submit', async (req, res) => {
     });
   } catch (error) {
     console.error('Error submitting application:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============ TOGGLE ACTIVE/INACTIVE ROUTE ============
+
+router.put('/:id/toggle', protect, adminOnly, async (req, res) => {
+  try {
+    console.log('🔄 Toggle placement status:', req.params.id);
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement not found' });
+    }
+    
+    // Flip the isActive boolean
+    placement.isActive = !placement.isActive;
+    await placement.save();
+
+    res.json({
+      success: true,
+      message: `Placement ${placement.isActive ? 'activated' : 'deactivated'} successfully`,
+      isActive: placement.isActive
+    });
+  } catch (error) {
+    console.error('Error toggling placement status:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ============ UPDATE PLACEMENT ROUTE (FOR EDIT BUTTON) ============
+
+router.put('/update/:id', protect, adminOnly, async (req, res) => {
+  try {
+    console.log('✏️ Update placement:', req.params.id);
+    const { 
+      formTitle, 
+      companyName, 
+      jobRole, 
+      jobLocation, 
+      salaryPackage, 
+      eligibilityCriteria, 
+      expiryDate, 
+      description 
+    } = req.body;
+
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement not found' });
+    }
+
+    // Update the fields
+    placement.formTitle = formTitle;
+    placement.companyName = companyName;
+    placement.jobRole = jobRole;
+    placement.jobLocation = jobLocation || '';
+    placement.salaryPackage = salaryPackage || '';
+    placement.eligibilityCriteria = eligibilityCriteria || '';
+    placement.expiryDate = expiryDate || null;
+    placement.description = description || '';
+
+    await placement.save();
+
+    res.json({
+      success: true,
+      message: 'Placement updated successfully',
+      placement
+    });
+  } catch (error) {
+    console.error('Error updating placement:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
