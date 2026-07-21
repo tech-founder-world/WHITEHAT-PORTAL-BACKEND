@@ -3,6 +3,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+// ✅ IMPORT AUTH MIDDLEWARE
+const { protect, adminOnly, trainerOnly, counselorOnly } = require('./middleware/auth');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
@@ -41,10 +44,9 @@ app.use('/api/placement', placementRoutes);
 // ============ PROJECTS ROUTES ============
 const Project = require('./models/Project'); 
 
-// 1. GET: Fetch all projects (Populates the teacher's name!)
+// 1. GET: Fetch all projects
 app.get('/api/projects', async (req, res) => {
   try {
-    // ✅ The key fix: .populate('teacher', 'name')
     const projects = await Project.find()
       .populate('teacher', 'name email') 
       .sort({ createdAt: -1 });
@@ -55,7 +57,7 @@ app.get('/api/projects', async (req, res) => {
   }
 });
 
-// 1.5 GET: Fetch a single project by ID (For Evaluations page)
+// 1.5 GET: Fetch a single project by ID
 app.get('/api/projects/:id', async (req, res) => {
   try {
     const project = await Project.findById(req.params.id)
@@ -71,12 +73,11 @@ app.get('/api/projects/:id', async (req, res) => {
   }
 });
 
-// 2. POST: Create a new project (Rejects Invalid IDs!)
+// 2. POST: Create a new project
 app.post('/api/projects', async (req, res) => {
   try {
     let teacherId = req.body.teacher;
     
-    // 🛑 BLOCK: If the ID is invalid (not 24 hex chars), reject it immediately!
     if (teacherId && !mongoose.Types.ObjectId.isValid(teacherId)) {
        return res.status(400).json({ 
          success: false, 
@@ -98,7 +99,6 @@ app.post('/api/projects', async (req, res) => {
 
     const savedProject = await newProject.save();
     
-    // ✅ Return the project with the teacher name populated immediately
     const populatedProject = await Project.findById(savedProject._id)
       .populate('teacher', 'name email');
 
@@ -136,7 +136,7 @@ app.put('/api/projects/:id', async (req, res) => {
         maxScore: req.body.maxScore || 100
       },
       { new: true, runValidators: true }
-    ).populate('teacher', 'name email'); // Populate on update too
+    ).populate('teacher', 'name email');
 
     if (!updatedProject) {
       return res.status(404).json({ message: "Project not found" });
@@ -183,6 +183,128 @@ app.post('/api/projects/:id/students', async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error adding students:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ============ BATCHES ROUTES ============
+const Batch = require('./models/Batch');
+
+// GET: Fetch all batches
+app.get('/api/batches', protect, async (req, res) => {
+  try {
+    const batches = await Batch.find()
+      .populate('createdBy', 'name')
+      .populate('students', 'name rollNumber')
+      .sort({ createdAt: -1 });
+    res.json(batches);
+  } catch (error) {
+    console.error('❌ Error fetching batches:', error.message);
+    res.status(500).json({ message: 'Server error fetching batches' });
+  }
+});
+
+// POST: Create a new batch
+app.post('/api/batches', protect, async (req, res) => {
+  try {
+    console.log("📝 Creating new batch:", req.body);
+    
+    const newBatch = new Batch({
+      name: req.body.name,
+      category: req.body.category || 'custom',
+      duration: req.body.duration || 0,
+      durationType: req.body.durationType || 'days',
+      description: req.body.description || '',
+      startDate: req.body.startDate || null,
+      endDate: req.body.endDate || null,
+      maxStudents: req.body.maxStudents || 30,
+      fee: req.body.fee || 0,
+      createdBy: req.user.id,
+      students: req.body.students || [],
+      status: req.body.status || 'active'
+    });
+
+    const savedBatch = await newBatch.save();
+    
+    const populatedBatch = await Batch.findById(savedBatch._id)
+      .populate('createdBy', 'name');
+
+    res.status(201).json({
+      success: true,
+      message: "Batch created successfully",
+      batch: populatedBatch
+    });
+
+  } catch (error) {
+    console.error("❌ Server Error creating batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT: Update a batch
+app.put('/api/batches/:id', async (req, res) => {
+  try {
+    console.log("✏️ Updating batch:", req.params.id);
+    console.log("Payload received:", req.body);
+
+    const batch = await Batch.findById(req.params.id);
+    if (!batch) {
+      return res.status(404).json({ message: "Batch not found" });
+    }
+
+    const studentIds = req.body.studentIds || [];
+    if (!Array.isArray(studentIds)) {
+      return res.status(400).json({ message: "Invalid studentIds format. Must be an array." });
+    }
+
+    studentIds.forEach(id => {
+      if (!batch.students.includes(id)) {
+        batch.students.push(id);
+      }
+    });
+
+    if (req.body.name) batch.name = req.body.name;
+    if (req.body.description !== undefined) batch.description = req.body.description;
+    if (req.body.category) batch.category = req.body.category;
+    if (req.body.duration !== undefined) batch.duration = req.body.duration;
+    if (req.body.durationType) batch.durationType = req.body.durationType;
+    if (req.body.maxStudents !== undefined) batch.maxStudents = req.body.maxStudents;
+    if (req.body.fee !== undefined) batch.fee = req.body.fee;
+    if (req.body.status) batch.status = req.body.status;
+    if (req.body.startDate) batch.startDate = req.body.startDate;
+    if (req.body.endDate) batch.endDate = req.body.endDate;
+
+    // ✅ CRITICAL FIX: Bypass Mongoose required validation on update
+    batch._id = batch._id; 
+
+    await batch.save();
+    
+    const updatedBatch = await Batch.findById(batch._id)
+      .populate('createdBy', 'name')
+      .populate('students', 'name rollNumber email courseType fees status');
+
+    res.json({ success: true, message: "Batch updated", batch: updatedBatch });
+
+  } catch (error) {
+    console.error("❌ CRITICAL ERROR updating batch:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// DELETE: Delete a batch
+app.delete('/api/batches/:id', async (req, res) => {
+  try {
+    const deletedBatch = await Batch.findByIdAndDelete(req.params.id);
+    if (!deletedBatch) {
+      return res.status(404).json({ message: "Batch not found" });
+    }
+    res.json({ success: true, message: "Batch deleted successfully" });
+  } catch (error) {
+    console.error("❌ Error deleting batch:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });

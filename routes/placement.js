@@ -35,10 +35,10 @@ router.post('/create', protect, adminOnly, async (req, res) => {
       expiryDate 
     } = req.body;
 
-    // Validate required fields
-    if (!formTitle || !companyName || !jobRole) {
+    // ✅ FIXED: Only Form Title is strictly required now
+    if (!formTitle) {
       return res.status(400).json({ 
-        message: 'Form title, company name, and job role are required' 
+        message: 'Form title is required' 
       });
     }
 
@@ -49,11 +49,11 @@ router.post('/create', protect, adminOnly, async (req, res) => {
     const placement = new Placement({
       formTitle,
       description,
-      companyName,
-      jobRole,
-      jobLocation,
-      salaryPackage,
-      eligibilityCriteria,
+      companyName: companyName || '', // Optional: default to empty
+      jobRole: jobRole || '',         // Optional: default to empty
+      jobLocation: jobLocation || '',
+      salaryPackage: salaryPackage || '',
+      eligibilityCriteria: eligibilityCriteria || '',
       createdBy: req.user.id,
       formLink,
       expiryDate: expiryDate || null
@@ -77,8 +77,9 @@ router.post('/create', protect, adminOnly, async (req, res) => {
   }
 });
 
-// Get all placements (Admin)
-router.get('/all', protect, adminOnly, async (req, res) => {
+// 👇 CHANGED: Removed 'adminOnly' so Counsellors can VIEW the list of forms
+// Get all placements (Admin AND Counsellor)
+router.get('/all', protect, async (req, res) => {
   try {
     console.log('📋 Get all placements hit');
     const placements = await Placement.find()
@@ -104,7 +105,7 @@ router.get('/all', protect, adminOnly, async (req, res) => {
 });
 
 // Get all applications for a placement (Admin)
-router.get('/applications/:placementId', protect, adminOnly, async (req, res) => {
+router.get('/applications/:placementId', protect, async (req, res) => {
   try {
     console.log('📋 Get applications for placement:', req.params.placementId);
     const { placementId } = req.params;
@@ -371,6 +372,108 @@ router.put('/update/:id', protect, adminOnly, async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating placement:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============ NEW ROUTES FOR COUNSELLOR TRACKER ============
+
+// 1. GET ALL APPLICATIONS (For Counsellor Tracker Page)
+router.get('/applications/all', protect, async (req, res) => {
+  try {
+    console.log('📋 Fetching all student applications for tracker...');
+    const applications = await PlacementApplication.find()
+      .populate('placementForm', 'formTitle companyName') // Optional: populates placement details
+      .sort({ createdAt: -1 });
+
+    res.json(applications);
+  } catch (error) {
+    console.error('Error fetching all applications:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// 2. COUNSELLOR UPDATE (Training details ONLY)
+router.put('/applications/:applicationId/counsellor-update', protect, async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { 
+      studentName, 
+      batchName, 
+      courseType, 
+      totalFees, 
+      feesPaid, 
+      joinedDate, 
+      endedDate, 
+      status 
+    } = req.body;
+
+    const application = await PlacementApplication.findById(applicationId);
+    if (!application) {
+      return res.status(404).json({ message: 'Student application not found' });
+    }
+
+    // Update basic fields
+    if (studentName !== undefined) application.studentName = studentName;
+    if (batchName !== undefined) application.batchName = batchName;
+    if (courseType !== undefined) application.courseType = courseType;
+    if (joinedDate !== undefined) application.joinedDate = joinedDate ? new Date(joinedDate) : null;
+    if (endedDate !== undefined) application.endedDate = endedDate ? new Date(endedDate) : null;
+    if (status !== undefined) application.status = status;
+
+    // ✅ Update Fees Details (with auto-calculation)
+    if (totalFees !== undefined) application.totalFees = totalFees;
+    if (feesPaid !== undefined) application.feesPaid = feesPaid;
+    
+    // Auto-calculate pending and due status
+    application.feesPending = application.totalFees - application.feesPaid;
+    application.dueClear = application.feesPending <= 0;
+
+    await application.save();
+
+    res.json({
+      success: true,
+      message: 'Student training details updated successfully',
+      application
+    });
+
+  } catch (error) {
+    console.error('Error updating student from counsellor:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============ COUNSELLOR INTERVIEW LOG ROUTE ============
+// Counsellor adds a new interview record for a student
+router.post('/applications/:applicationId/interview', protect, async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { status } = req.body; // status: "shortlisted", "selected", "rejected"
+
+    const application = await PlacementApplication.findById(applicationId);
+    if (!application) {
+      return res.status(404).json({ message: 'Student application not found' });
+    }
+
+    // Add the new interview to the array
+    application.interviews.push({
+      date: new Date(),
+      status: status
+    });
+
+    // Update the main status field as well (optional, but good for quick display)
+    application.status = status;
+
+    await application.save();
+
+    res.json({
+      success: true,
+      message: 'Interview logged successfully',
+      application
+    });
+
+  } catch (error) {
+    console.error('Error logging interview:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

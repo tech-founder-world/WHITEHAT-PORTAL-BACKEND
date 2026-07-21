@@ -3,6 +3,7 @@ const router = express.Router();
 const Attendance = require("../models/Attendance");
 const Student = require("../models/Student");
 const { protect } = require("../middleware/auth");
+const User = require('../models/User');
 
 router.use(protect);
 
@@ -48,7 +49,7 @@ router.get("/", async (req, res) => {
 
     const records = await Attendance.find(filter)
       .populate("student", "name rollNumber subjects")
-      .populate("markedBy", "name")
+      .populate("markedBy", "name email")
       .sort({ date: -1 });
     res.json(records);
   } catch (err) {
