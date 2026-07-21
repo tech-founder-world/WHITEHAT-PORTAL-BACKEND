@@ -11,7 +11,7 @@ router.get("/students", async (req, res) => {
   try {
     const counsellor = await User.findById(req.user._id).populate(
       "students",
-      "name rollNumber subjects email",
+      "name rollNumber subjects email phone fatherName paymentStatus totalFee paidAmount dueAmount",
     );
     if (!counsellor)
       return res.status(404).json({ message: "Counsellor not found" });

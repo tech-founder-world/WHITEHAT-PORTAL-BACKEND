@@ -2,220 +2,177 @@ const express = require("express");
 const router = express.Router();
 const Project = require("../models/Project");
 const Student = require("../models/Student");
-const User = require("../models/User");
-const Evaluation = require("../models/Evaluation");
 const { protect } = require("../middleware/auth");
 
 // All routes require authentication
 router.use(protect);
 
-// GET /api/projects - Get all projects
+// GET: Fetch all projects
 router.get("/", async (req, res) => {
   try {
     let filter = {};
 
-    if (req.user.role === "admin") {
-      // Admin sees all projects - no filter
-    } else if (req.user.role === "teacher") {
+    if (req.user.role === "teacher") {
       filter.teacher = req.user._id;
     } else if (req.user.role === "counsellor") {
+      // Counsellors see projects with their students
+      const User = require("../models/User");
       const counsellor = await User.findById(req.user._id).populate("students");
       const studentIds = counsellor.students.map((s) => s._id);
       filter.students = { $in: studentIds };
     }
+    // Admin sees all projects (no filter)
 
     const projects = await Project.find(filter)
       .populate("teacher", "name email")
-      .populate("students", "name rollNumber")
+      .populate("students", "name rollNumber email")
       .sort({ createdAt: -1 });
-
     res.json(projects);
-  } catch (err) {
-    console.error("Error fetching projects:", err);
-    res.status(500).json({ message: "Server error" });
+  } catch (error) {
+    console.error("❌ Error fetching projects:", error.message);
+    res.status(500).json({ message: "Server error fetching projects" });
   }
 });
 
-// GET /api/projects/:id - Get single project
+// GET: Fetch a single project
 router.get("/:id", async (req, res) => {
   try {
     const project = await Project.findById(req.params.id)
       .populate("teacher", "name email")
       .populate("students", "name rollNumber email");
-
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
-
-    // Admin can access all projects
-    if (req.user.role === "admin") {
-      return res.json(project);
-    }
-
-    // Teacher can only access their own projects
-    if (req.user.role === "teacher") {
-      if (project.teacher._id.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({ message: "Access denied - This is not your project" });
-      }
-      return res.json(project);
-    }
-
-    // Counsellor can only access projects with their assigned students
-    if (req.user.role === "counsellor") {
-      const counsellor = await User.findById(req.user._id).populate("students");
-      const studentIds = counsellor.students.map((s) => s._id.toString());
-
-      const hasAccess = project.students.some((s) =>
-        studentIds.includes(s._id.toString()),
-      );
-
-      if (!hasAccess) {
-        return res
-          .status(403)
-          .json({
-            message: "Access denied - No assigned students in this project",
-          });
-      }
-      return res.json(project);
-    }
-
-    return res.status(403).json({ message: "Access denied" });
-  } catch (err) {
-    console.error("Error fetching project:", err);
-    res.status(500).json({ message: "Server error" });
+    res.json(project);
+  } catch (error) {
+    console.error("❌ Error fetching project by ID:", error.message);
+    res.status(500).json({ message: "Server error fetching project" });
   }
 });
 
-// POST /api/projects - Create a new project
+// POST: Create a new project
 router.post("/", async (req, res) => {
   try {
     const {
       name,
       description,
+      teacher,
+      students,
       subject,
       startDate,
       endDate,
-      students,
       maxScore,
-      teacher,
     } = req.body;
 
-    if (!name || !subject) {
-      return res
-        .status(400)
-        .json({ message: "Project name and subject required" });
-    }
-
-    // Determine teacher ID based on role
-    let teacherId;
-
+    // If teacher is creating, auto-assign themselves
+    let teacherId = teacher;
     if (req.user.role === "teacher") {
-      // Teacher creates project - auto-assign themselves
       teacherId = req.user._id;
-    } else if (req.user.role === "admin") {
-      // Admin must specify a teacher
-      if (!teacher) {
-        return res.status(400).json({ message: "Teacher required for admin" });
-      }
-      teacherId = teacher;
-    } else {
+    } else if (req.user.role !== "admin") {
       return res
         .status(403)
         .json({ message: "Only admins and teachers can create projects" });
     }
 
-    const project = await Project.create({
+    if (!teacherId) {
+      return res.status(400).json({ message: "Teacher is required" });
+    }
+
+    const newProject = new Project({
       name,
       description: description || "",
       teacher: teacherId,
+      students: students || [],
       subject,
       startDate: startDate || "",
       endDate: endDate || "",
-      students: students || [],
+      status: req.body.status || "active",
       maxScore: maxScore || 100,
-      status: "active",
     });
+
+    const savedProject = await newProject.save();
 
     // Update students with project reference
     if (students && students.length > 0) {
       await Student.updateMany(
         { _id: { $in: students } },
-        { $addToSet: { projects: project._id } },
+        { $addToSet: { projects: savedProject._id } },
       );
     }
 
-    await project.populate("teacher", "name email");
-    await project.populate("students", "name rollNumber");
+    const populatedProject = await Project.findById(savedProject._id)
+      .populate("teacher", "name email")
+      .populate("students", "name rollNumber email");
 
-    res.status(201).json(project);
-  } catch (err) {
-    console.error("Error creating project:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(201).json({
+      success: true,
+      message: "Project created successfully",
+      project: populatedProject,
+    });
+  } catch (error) {
+    console.error("❌ Server Error creating project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// PUT /api/projects/:id - Update project
+// PUT: Update a project
 router.put("/:id", async (req, res) => {
   try {
-    const {
-      name,
-      description,
-      subject,
-      startDate,
-      endDate,
-      students,
-      maxScore,
-      status,
-    } = req.body;
-
     const project = await Project.findById(req.params.id);
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    // Admin can edit any project, teacher can only edit their own
-    if (req.user.role === "admin") {
-      // Admin can edit any project
-    } else if (req.user.role === "teacher") {
-      if (project.teacher.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({
-            message: "Access denied - You can only edit your own projects",
-          });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      project.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only edit your own projects" });
     }
 
-    const updated = await Project.findByIdAndUpdate(
+    const updatedProject = await Project.findByIdAndUpdate(
       req.params.id,
       {
-        name: name || project.name,
+        name: req.body.name || project.name,
         description:
-          description !== undefined ? description : project.description,
-        subject: subject || project.subject,
-        startDate: startDate || project.startDate,
-        endDate: endDate || project.endDate,
-        students: students || project.students,
-        maxScore: maxScore || project.maxScore,
-        status: status || project.status,
+          req.body.description !== undefined
+            ? req.body.description
+            : project.description,
+        teacher: req.body.teacher || project.teacher,
+        students:
+          req.body.students !== undefined
+            ? req.body.students
+            : project.students,
+        subject: req.body.subject || project.subject,
+        startDate:
+          req.body.startDate !== undefined
+            ? req.body.startDate
+            : project.startDate,
+        endDate:
+          req.body.endDate !== undefined ? req.body.endDate : project.endDate,
+        status: req.body.status || project.status,
+        maxScore: req.body.maxScore || project.maxScore,
       },
-      { new: true },
+      { new: true, runValidators: true },
     )
       .populate("teacher", "name email")
-      .populate("students", "name rollNumber");
+      .populate("students", "name rollNumber email");
 
-    res.json(updated);
-  } catch (err) {
-    console.error("Error updating project:", err);
-    res.status(500).json({ message: "Server error" });
+    res.json({
+      success: true,
+      message: "Project updated successfully",
+      project: updatedProject,
+    });
+  } catch (error) {
+    console.error("❌ Error updating project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// DELETE /api/projects/:id - Delete project
+// DELETE: Delete a project
 router.delete("/:id", async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
@@ -223,19 +180,14 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    // Admin can delete any project, teacher can only delete their own
-    if (req.user.role === "admin") {
-      // Admin can delete any project
-    } else if (req.user.role === "teacher") {
-      if (project.teacher.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({
-            message: "Access denied - You can only delete your own projects",
-          });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      project.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only delete your own projects" });
     }
 
     // Remove project reference from students
@@ -245,65 +197,66 @@ router.delete("/:id", async (req, res) => {
     );
 
     // Delete associated evaluations
+    const Evaluation = require("../models/Evaluation");
     await Evaluation.deleteMany({ project: project._id });
 
     await project.deleteOne();
-    res.json({ message: "Project deleted successfully" });
-  } catch (err) {
-    console.error("Error deleting project:", err);
-    res.status(500).json({ message: "Server error" });
+    res.json({ success: true, message: "Project deleted successfully" });
+  } catch (error) {
+    console.error("❌ Error deleting project:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// POST /api/projects/:id/students - Add students to project
+// POST: Add students to project
 router.post("/:id/students", async (req, res) => {
   try {
-    const { studentIds } = req.body;
-    if (!studentIds || studentIds.length === 0) {
-      return res.status(400).json({ message: "Student IDs required" });
-    }
-
     const project = await Project.findById(req.params.id);
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    // Admin can add students to any project, teacher can only add to their own
-    if (req.user.role === "admin") {
-      // Admin can add students to any project
-    } else if (req.user.role === "teacher") {
-      if (project.teacher.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({
-            message: "Access denied - You can only modify your own projects",
-          });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      project.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only modify your own projects" });
     }
 
-    // Add students (avoid duplicates)
-    const updated = await Project.findByIdAndUpdate(
-      req.params.id,
-      { $addToSet: { students: { $each: studentIds } } },
-      { new: true },
-    ).populate("students", "name rollNumber");
+    const newStudents = req.body.studentIds || [];
+    newStudents.forEach((id) => {
+      if (!project.students.includes(id)) {
+        project.students.push(id);
+      }
+    });
+
+    await project.save();
 
     // Update students with project reference
     await Student.updateMany(
-      { _id: { $in: studentIds } },
+      { _id: { $in: newStudents } },
       { $addToSet: { projects: project._id } },
     );
 
-    res.json(updated);
-  } catch (err) {
-    console.error("Error adding students:", err);
-    res.status(500).json({ message: "Server error" });
+    const populatedProject = await Project.findById(project._id)
+      .populate("teacher", "name email")
+      .populate("students", "name rollNumber email");
+
+    res.json({
+      success: true,
+      message: "Students added successfully",
+      project: populatedProject,
+    });
+  } catch (error) {
+    console.error("❌ Error adding students:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// DELETE /api/projects/:id/students/:studentId - Remove student from project
+// DELETE: Remove student from project
 router.delete("/:id/students/:studentId", async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
@@ -311,36 +264,30 @@ router.delete("/:id/students/:studentId", async (req, res) => {
       return res.status(404).json({ message: "Project not found" });
     }
 
-    // Admin can remove students from any project, teacher can only remove from their own
-    if (req.user.role === "admin") {
-      // Admin can remove students from any project
-    } else if (req.user.role === "teacher") {
-      if (project.teacher.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({
-            message: "Access denied - You can only modify your own projects",
-          });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      project.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only modify your own projects" });
     }
 
-    const updated = await Project.findByIdAndUpdate(
-      req.params.id,
-      { $pull: { students: req.params.studentId } },
-      { new: true },
-    ).populate("students", "name rollNumber");
+    project.students = project.students.filter(
+      (id) => id.toString() !== req.params.studentId,
+    );
+    await project.save();
 
     // Remove project from student
     await Student.findByIdAndUpdate(req.params.studentId, {
       $pull: { projects: project._id },
     });
 
-    res.json(updated);
-  } catch (err) {
-    console.error("Error removing student:", err);
-    res.status(500).json({ message: "Server error" });
+    res.json({ success: true, message: "Student removed from project" });
+  } catch (error) {
+    console.error("❌ Error removing student:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

@@ -3,15 +3,16 @@ const mongoose = require("mongoose");
 const studentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    rollNumber: { type: String, required: true, unique: true, trim: true },
-    email: { type: String, trim: true },
+    fatherName: { type: String, required: true, trim: true },
+    email: { type: String, required: true, trim: true, lowercase: true },
+    phone: { type: String, required: true, trim: true },
     subjects: [{ type: String, trim: true }],
     projects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Project" }],
     batches: [{ type: mongoose.Schema.Types.ObjectId, ref: "Batch" }],
-    phone: { type: String, trim: true },
-    class: { type: String, trim: true },
-    section: { type: String, trim: true },
-    // Track who added the student
+    // Simplified payment fields - only amounts
+    totalFee: { type: Number, default: 0 },
+    paidAmount: { type: Number, default: 0 },
+    dueAmount: { type: Number, default: 0 },
     addedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -27,5 +28,8 @@ const studentSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Add index on email for faster lookups
+studentSchema.index({ email: 1 });
 
 module.exports = mongoose.model("Student", studentSchema);
