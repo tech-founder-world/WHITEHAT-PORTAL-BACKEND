@@ -24,12 +24,11 @@ router.get("/", async (req, res) => {
       .populate("createdBy", "name email role")
       .populate(
         "students",
-        "name fatherName email phone subjects totalFee paidAmount dueAmount status courseType"
+        "name fatherName email phone subjects totalFee paidAmount dueAmount status courseType",
       )
       .sort({ createdAt: -1 });
     res.json(batches);
   } catch (error) {
-    console.error("❌ Error fetching batches:", error.message);
     res.status(500).json({ message: "Server error fetching batches" });
   }
 });
@@ -41,7 +40,7 @@ router.get("/:id", async (req, res) => {
       .populate("createdBy", "name email role")
       .populate(
         "students",
-        "name fatherName email phone subjects totalFee paidAmount dueAmount status courseType"
+        "name fatherName email phone subjects totalFee paidAmount dueAmount status courseType",
       );
 
     if (!batch) {
@@ -59,7 +58,6 @@ router.get("/:id", async (req, res) => {
 
     res.json(batch);
   } catch (error) {
-    console.error("❌ Error fetching batch:", error.message);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -73,9 +71,6 @@ router.post("/", async (req, res) => {
         .json({ message: "Only teachers and admins can create batches" });
     }
 
-    console.log("📝 Creating new batch:", req.body);
-
-    // For admin: use createdBy from request body, for teacher: use their own ID
     let createdBy = req.user._id;
     if (req.user.role === "admin" && req.body.createdBy) {
       createdBy = req.body.createdBy;
@@ -103,7 +98,7 @@ router.post("/", async (req, res) => {
     if (req.body.students && req.body.students.length > 0) {
       await Student.updateMany(
         { _id: { $in: req.body.students } },
-        { $addToSet: { batches: savedBatch._id } }
+        { $addToSet: { batches: savedBatch._id } },
       );
     }
 
@@ -117,23 +112,18 @@ router.post("/", async (req, res) => {
       batch: populatedBatch,
     });
   } catch (error) {
-    console.error("❌ Server Error creating batch:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// PUT: Update a batch - FIXED VERSION
+// PUT: Update a batch
 router.put("/:id", async (req, res) => {
   try {
-    console.log("✏️ Updating batch:", req.params.id);
-    console.log("📦 Update data received:", req.body);
-
     const batch = await Batch.findById(req.params.id);
     if (!batch) {
       return res.status(404).json({ message: "Batch not found" });
     }
 
-    // Check permissions
     if (
       req.user.role === "teacher" &&
       batch.createdBy.toString() !== req.user._id.toString()
@@ -143,46 +133,45 @@ router.put("/:id", async (req, res) => {
         .json({ message: "You can only edit your own batches" });
     }
 
-    // Update ALL fields
     if (req.body.name) batch.name = req.body.name;
-    if (req.body.description !== undefined) batch.description = req.body.description;
+    if (req.body.description !== undefined)
+      batch.description = req.body.description;
     if (req.body.timing !== undefined) batch.timing = req.body.timing;
     if (req.body.startDate) batch.startDate = req.body.startDate;
     if (req.body.endDate) batch.endDate = req.body.endDate;
-    if (req.body.maxStudents !== undefined) batch.maxStudents = req.body.maxStudents;
+    if (req.body.maxStudents !== undefined)
+      batch.maxStudents = req.body.maxStudents;
     if (req.body.fee !== undefined) batch.fee = req.body.fee;
     if (req.body.status) batch.status = req.body.status;
     if (req.body.category) batch.category = req.body.category;
-    
-    // CRITICAL FIX: Update duration fields
-    if (req.body.duration !== undefined && req.body.duration !== null && req.body.duration !== "") {
+
+    if (
+      req.body.duration !== undefined &&
+      req.body.duration !== null &&
+      req.body.duration !== ""
+    ) {
       batch.duration = Number(req.body.duration);
     }
     if (req.body.durationType) batch.durationType = req.body.durationType;
-    
-    // CRITICAL FIX: Update teacher (createdBy)
+
     if (req.body.createdBy) {
       try {
         const teacher = await User.findById(req.body.createdBy);
-        if (teacher && (teacher.role === "teacher" || teacher.role === "admin")) {
+        if (
+          teacher &&
+          (teacher.role === "teacher" || teacher.role === "admin")
+        ) {
           batch.createdBy = req.body.createdBy;
-          console.log("✅ Teacher updated to:", teacher.name);
-        } else if (teacher) {
-          console.log("⚠️ User found but role is not teacher/admin:", teacher.role);
-        } else {
-          console.log("⚠️ User not found with ID:", req.body.createdBy);
         }
       } catch (err) {
-        console.error("❌ Error finding teacher:", err.message);
+        // Silently handle error
       }
     }
 
-    // Handle topics
     if (req.body.topics && Array.isArray(req.body.topics)) {
       batch.topics = req.body.topics;
     }
 
-    // Handle students
     if (req.body.studentIds && Array.isArray(req.body.studentIds)) {
       req.body.studentIds.forEach((id) => {
         if (!batch.students.includes(id)) {
@@ -192,7 +181,7 @@ router.put("/:id", async (req, res) => {
 
       await Student.updateMany(
         { _id: { $in: req.body.studentIds } },
-        { $addToSet: { batches: batch._id } }
+        { $addToSet: { batches: batch._id } },
       );
     }
 
@@ -202,12 +191,8 @@ router.put("/:id", async (req, res) => {
       .populate("createdBy", "name email role")
       .populate(
         "students",
-        "name fatherName email phone totalFee paidAmount dueAmount status courseType"
+        "name fatherName email phone totalFee paidAmount dueAmount status courseType",
       );
-
-    console.log("✅ Batch updated successfully:", updatedBatch.name);
-    console.log("✅ Teacher:", updatedBatch.createdBy?.name || "None");
-    console.log("✅ Duration:", updatedBatch.duration, updatedBatch.durationType);
 
     res.json({
       success: true,
@@ -215,8 +200,6 @@ router.put("/:id", async (req, res) => {
       batch: updatedBatch,
     });
   } catch (error) {
-    console.error("❌ Error updating batch:", error.message);
-    console.error("❌ Stack:", error.stack);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -260,7 +243,7 @@ router.post("/:id/add-students", async (req, res) => {
       const teacherStudentIds = teacherStudents.map((s) => s._id.toString());
 
       validStudentIds = studentIds.filter((id) =>
-        teacherStudentIds.includes(id.toString())
+        teacherStudentIds.includes(id.toString()),
       );
 
       if (validStudentIds.length === 0) {
@@ -283,7 +266,7 @@ router.post("/:id/add-students", async (req, res) => {
     if (addedStudents.length > 0) {
       await Student.updateMany(
         { _id: { $in: addedStudents } },
-        { $addToSet: { batches: batch._id } }
+        { $addToSet: { batches: batch._id } },
       );
     }
 
@@ -291,7 +274,7 @@ router.post("/:id/add-students", async (req, res) => {
       .populate("createdBy", "name email role")
       .populate(
         "students",
-        "name fatherName email phone totalFee paidAmount dueAmount status"
+        "name fatherName email phone totalFee paidAmount dueAmount status",
       );
 
     res.json({
@@ -300,7 +283,6 @@ router.post("/:id/add-students", async (req, res) => {
       batch: updatedBatch,
     });
   } catch (error) {
-    console.error("❌ Error adding students to batch:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -317,15 +299,13 @@ router.delete("/:batchId/students/:studentId", async (req, res) => {
       req.user.role === "teacher" &&
       batch.createdBy.toString() !== req.user._id.toString()
     ) {
-      return res
-        .status(403)
-        .json({
-          message: "You can only remove students from your own batches",
-        });
+      return res.status(403).json({
+        message: "You can only remove students from your own batches",
+      });
     }
 
     batch.students = batch.students.filter(
-      (id) => id.toString() !== req.params.studentId
+      (id) => id.toString() !== req.params.studentId,
     );
     await batch.save();
 
@@ -343,7 +323,6 @@ router.delete("/:batchId/students/:studentId", async (req, res) => {
       batch: updatedBatch,
     });
   } catch (error) {
-    console.error("❌ Error removing student from batch:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -367,7 +346,7 @@ router.delete("/:id", async (req, res) => {
 
     await Student.updateMany(
       { batches: batch._id },
-      { $pull: { batches: batch._id } }
+      { $pull: { batches: batch._id } },
     );
 
     await batch.deleteOne();
@@ -376,7 +355,6 @@ router.delete("/:id", async (req, res) => {
       message: "Batch deleted successfully",
     });
   } catch (error) {
-    console.error("❌ Error deleting batch:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -417,7 +395,6 @@ router.post("/:id/topics", async (req, res) => {
       batch: updatedBatch,
     });
   } catch (error) {
-    console.error("❌ Error adding topic:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });

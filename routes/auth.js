@@ -5,8 +5,6 @@ const User = require("../models/User");
 
 // POST /api/auth/register
 router.post("/register", async (req, res) => {
-  console.log("REGISTER API HIT");
-
   try {
     const { name, email, password, role, subjects } = req.body;
 

@@ -279,7 +279,6 @@ router.post("/students/assign-teacher", async (req, res) => {
       await User.findByIdAndUpdate(oldTeacherId, {
         $pull: { students: studentId },
       });
-      console.log(`✅ Removed student from old teacher: ${oldTeacherId}`);
     }
 
     // Update student with new teacher
