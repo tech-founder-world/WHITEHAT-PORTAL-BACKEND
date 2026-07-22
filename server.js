@@ -15,6 +15,7 @@ const placementRoutes = require("./routes/placement");
 const projectRoutes = require("./routes/projects");
 const batchRoutes = require("./routes/batches");
 const exportRoutes = require("./routes/export");
+const userRoutes = require("./routes/users");
 
 // Import Google Sheets utility
 const { initializeSheet } = require("./utils/googleSheets");
@@ -43,6 +44,7 @@ app.use("/api/placement", placementRoutes);
 app.use("/api/projects", projectRoutes); // NEW
 app.use("/api/batches", batchRoutes);
 app.use("/api/export", exportRoutes);
+app.use("/api/users", userRoutes);
 
 // MongoDB Connection
 mongoose
