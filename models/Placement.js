@@ -3,11 +3,8 @@ const mongoose = require('mongoose');
 const placementSchema = new mongoose.Schema({
   formTitle: { type: String, required: true, trim: true },
   description: { type: String, trim: true },
-  
-  // ✅ REMOVED 'required: true' from both of these!
   companyName: { type: String, trim: true }, 
   jobRole: { type: String, trim: true },     
-  
   jobLocation: { type: String, trim: true },
   salaryPackage: { type: String, trim: true },
   eligibilityCriteria: { type: String, trim: true },

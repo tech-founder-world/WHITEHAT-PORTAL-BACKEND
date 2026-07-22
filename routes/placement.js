@@ -3,90 +3,16 @@ const router = express.Router();
 const Placement = require('../models/Placement');
 const PlacementApplication = require('../models/PlacementApplication');
 const { protect, adminOnly } = require('../middleware/auth');
-const { addToSheet } = require('../utils/googleSheets');
-
-// ✅ TEST ROUTE - Add this at the very top
-router.get('/test', (req, res) => {
-  console.log('✅ Placement test route hit!');
-  res.json({ 
-    success: true, 
-    message: 'Placement routes are working!',
-    timestamp: new Date().toISOString()
-  });
-});
 
 // ============ ADMIN ROUTES ============
 
-// Create a new placement form (Admin only)
-router.post('/create', protect, adminOnly, async (req, res) => {
-  try {
-    console.log('📝 Create placement route hit!');
-    console.log('User:', req.user);
-    console.log('Body:', req.body);
-    
-    const { 
-      formTitle, 
-      description, 
-      companyName, 
-      jobRole, 
-      jobLocation,
-      salaryPackage,
-      eligibilityCriteria,
-      expiryDate 
-    } = req.body;
-
-    // ✅ FIXED: Only Form Title is strictly required now
-    if (!formTitle) {
-      return res.status(400).json({ 
-        message: 'Form title is required' 
-      });
-    }
-
-    // Generate unique form link
-    const shortid = require('shortid');
-    const formLink = `placement/${shortid.generate()}`;
-
-    const placement = new Placement({
-      formTitle,
-      description,
-      companyName: companyName || '', // Optional: default to empty
-      jobRole: jobRole || '',         // Optional: default to empty
-      jobLocation: jobLocation || '',
-      salaryPackage: salaryPackage || '',
-      eligibilityCriteria: eligibilityCriteria || '',
-      createdBy: req.user.id,
-      formLink,
-      expiryDate: expiryDate || null
-    });
-
-    await placement.save();
-
-    // Create shareable link
-    const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
-    const shareableLink = `${baseUrl}/api/placement/public/${placement.formLink}`;
-
-    res.status(201).json({
-      success: true,
-      message: 'Placement form created successfully',
-      placement,
-      shareableLink
-    });
-  } catch (error) {
-    console.error('Error creating placement:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// 👇 CHANGED: Removed 'adminOnly' so Counsellors can VIEW the list of forms
-// Get all placements (Admin AND Counsellor)
+// GET: All placements
 router.get('/all', protect, async (req, res) => {
   try {
-    console.log('📋 Get all placements hit');
     const placements = await Placement.find()
       .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
     
-    // Get application count for each placement
     const placementsWithCount = await Promise.all(placements.map(async (placement) => {
       const applicationCount = await PlacementApplication.countDocuments({
         placementForm: placement._id
@@ -104,239 +30,84 @@ router.get('/all', protect, async (req, res) => {
   }
 });
 
-// Get all applications for a placement (Admin)
-router.get('/applications/:placementId', protect, async (req, res) => {
+// GET: Single placement with applications
+router.get('/:id', protect, async (req, res) => {
   try {
-    console.log('📋 Get applications for placement:', req.params.placementId);
-    const { placementId } = req.params;
+    const placement = await Placement.findById(req.params.id)
+      .populate('createdBy', 'name email');
     
-    const placement = await Placement.findById(placementId);
     if (!placement) {
       return res.status(404).json({ message: 'Placement not found' });
     }
 
     const applications = await PlacementApplication.find({
-      placementForm: placementId
+      placementForm: placement._id
     }).sort({ appliedAt: -1 });
 
     res.json({
-      placement: placement.formTitle,
-      totalApplications: applications.length,
+      placement,
       applications
     });
   } catch (error) {
-    console.error('Error fetching applications:', error);
+    console.error('Error fetching placement:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Update application status (Admin)
-router.put('/applications/:applicationId/status', protect, adminOnly, async (req, res) => {
+// POST: Create placement
+router.post('/create', protect, adminOnly, async (req, res) => {
   try {
-    console.log('📝 Update application status:', req.params.applicationId);
-    const { applicationId } = req.params;
-    const { status, comments } = req.body;
-
-    if (!status) {
-      return res.status(400).json({ message: 'Status is required' });
-    }
-
-    const application = await PlacementApplication.findById(applicationId);
-    if (!application) {
-      return res.status(404).json({ message: 'Application not found' });
-    }
-
-    application.status = status;
-    if (comments) application.comments = comments;
-    await application.save();
-
-    res.json({
-      success: true,
-      message: 'Application status updated successfully',
-      application
-    });
-  } catch (error) {
-    console.error('Error updating application status:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Delete placement (Admin)
-router.delete('/:id', protect, adminOnly, async (req, res) => {
-  try {
-    console.log('🗑️ Delete placement:', req.params.id);
-    const placement = await Placement.findById(req.params.id);
-    if (!placement) {
-      return res.status(404).json({ message: 'Placement not found' });
-    }
-
-    // Delete all associated applications
-    await PlacementApplication.deleteMany({ placementForm: req.params.id });
-    await placement.deleteOne();
-
-    res.json({
-      success: true,
-      message: 'Placement and all applications deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting placement:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// ============ PUBLIC ROUTES ============
-
-// Get placement form by link (Public)
-router.get('/public/:formLink', async (req, res) => {
-  try {
-    console.log('📋 Get public placement:', req.params.formLink);
-    const { formLink } = req.params;
-    
-    const placement = await Placement.findOne({ 
-      formLink: `placement/${formLink}`,
-      isActive: true 
-    });
-
-    if (!placement) {
-      return res.status(404).json({ 
-        message: 'Placement form not found or inactive' 
-      });
-    }
-
-    // Check if expired
-    if (placement.expiryDate && new Date(placement.expiryDate) < new Date()) {
-      return res.status(400).json({ 
-        message: 'This placement form has expired' 
-      });
-    }
-
-    // Return only necessary data for the form
-    res.json({
-      placementId: placement._id,
-      formTitle: placement.formTitle,
-      description: placement.description,
-      companyName: placement.companyName,
-      jobRole: placement.jobRole,
-      jobLocation: placement.jobLocation,
-      salaryPackage: placement.salaryPackage,
-      eligibilityCriteria: placement.eligibilityCriteria,
-      expiryDate: placement.expiryDate
-    });
-  } catch (error) {
-    console.error('Error fetching public placement:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Submit application to placement (Public)
-router.post('/public/submit', async (req, res) => {
-  try {
-    console.log('📝 Submit application hit!');
-    const {
-      placementId,
-      studentName,
-      studentEmail,
-      studentPhone,
-      studentId,
-      branch,
-      year,
-      semester,
-      cgpa,
-      skills,
-      experience,
-      resumeLink,
-      additionalInfo
+    const { 
+      formTitle, 
+      description, 
+      companyName, 
+      jobRole, 
+      jobLocation,
+      salaryPackage,
+      eligibilityCriteria,
+      expiryDate 
     } = req.body;
 
-    // Validate required fields
-    if (!placementId || !studentName || !studentEmail || !studentPhone || 
-        !studentId || !branch || !year || !semester || cgpa === undefined) {
-      return res.status(400).json({ 
-        message: 'All required fields must be filled' 
-      });
+    if (!formTitle) {
+      return res.status(400).json({ message: 'Form title is required' });
     }
 
-    // Check if placement exists and is active
-    const placement = await Placement.findById(placementId);
-    if (!placement || !placement.isActive) {
-      return res.status(404).json({ message: 'Placement form not available' });
-    }
+    const shortid = require('shortid');
+    const formLink = `placement/${shortid.generate()}`;
 
-    // Check if student already applied
-    const existingApplication = await PlacementApplication.findOne({
-      placementForm: placementId,
-      studentEmail: studentEmail.toLowerCase()
+    const placement = new Placement({
+      formTitle,
+      description,
+      companyName: companyName || '',
+      jobRole: jobRole || '',
+      jobLocation: jobLocation || '',
+      salaryPackage: salaryPackage || '',
+      eligibilityCriteria: eligibilityCriteria || '',
+      createdBy: req.user.id,
+      formLink,
+      expiryDate: expiryDate || null
     });
 
-    if (existingApplication) {
-      return res.status(400).json({ 
-        message: 'You have already applied for this placement' 
-      });
-    }
+    await placement.save();
 
-    // Create application
-    const application = new PlacementApplication({
-      placementForm: placementId,
-      studentName,
-      studentEmail: studentEmail.toLowerCase(),
-      studentPhone,
-      studentId,
-      branch,
-      year,
-      semester,
-      cgpa,
-      skills: skills || [],
-      experience: experience || '',
-      resumeLink: resumeLink || '',
-      additionalInfo: additionalInfo || ''
-    });
-
-    await application.save();
-
-    // Add to Google Sheet
-    await addToSheet(application, placement.formTitle);
+    const baseUrl = process.env.BASE_URL || 'http://localhost:5174';
+    const shareableLink = `${baseUrl}/apply/${placement.formLink}`;
 
     res.status(201).json({
       success: true,
-      message: 'Application submitted successfully!',
-      applicationId: application._id
+      message: 'Placement form created successfully',
+      placement,
+      shareableLink
     });
   } catch (error) {
-    console.error('Error submitting application:', error);
+    console.error('Error creating placement:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// ============ TOGGLE ACTIVE/INACTIVE ROUTE ============
-
-router.put('/:id/toggle', protect, adminOnly, async (req, res) => {
-  try {
-    console.log('🔄 Toggle placement status:', req.params.id);
-    const placement = await Placement.findById(req.params.id);
-    if (!placement) {
-      return res.status(404).json({ message: 'Placement not found' });
-    }
-    
-    // Flip the isActive boolean
-    placement.isActive = !placement.isActive;
-    await placement.save();
-
-    res.json({
-      success: true,
-      message: `Placement ${placement.isActive ? 'activated' : 'deactivated'} successfully`,
-      isActive: placement.isActive
-    });
-  } catch (error) {
-    console.error('Error toggling placement status:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// ============ UPDATE PLACEMENT ROUTE (FOR EDIT BUTTON) ============
-
+// PUT: Update placement
 router.put('/update/:id', protect, adminOnly, async (req, res) => {
   try {
-    console.log('✏️ Update placement:', req.params.id);
     const { 
       formTitle, 
       companyName, 
@@ -353,7 +124,6 @@ router.put('/update/:id', protect, adminOnly, async (req, res) => {
       return res.status(404).json({ message: 'Placement not found' });
     }
 
-    // Update the fields
     placement.formTitle = formTitle;
     placement.companyName = companyName;
     placement.jobRole = jobRole;
@@ -376,15 +146,162 @@ router.put('/update/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// ============ NEW ROUTES FOR COUNSELLOR TRACKER ============
+// PUT: Toggle placement active/inactive
+router.put('/:id/toggle', protect, adminOnly, async (req, res) => {
+  try {
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement not found' });
+    }
+    
+    placement.isActive = !placement.isActive;
+    await placement.save();
 
-// 1. GET ALL APPLICATIONS (For Counsellor Tracker Page)
+    res.json({
+      success: true,
+      message: `Placement ${placement.isActive ? 'activated' : 'deactivated'} successfully`,
+      isActive: placement.isActive
+    });
+  } catch (error) {
+    console.error('Error toggling placement status:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE: Delete placement
+router.delete('/:id', protect, adminOnly, async (req, res) => {
+  try {
+    const placement = await Placement.findById(req.params.id);
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement not found' });
+    }
+
+    await PlacementApplication.deleteMany({ placementForm: req.params.id });
+    await placement.deleteOne();
+
+    res.json({
+      success: true,
+      message: 'Placement and all applications deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting placement:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ============ PUBLIC ROUTES ============
+
+// GET: Public placement form
+router.get('/public/:formLink', async (req, res) => {
+  try {
+    const { formLink } = req.params;
+    
+    const placement = await Placement.findOne({ 
+      formLink: `placement/${formLink}`,
+      isActive: true 
+    });
+
+    if (!placement) {
+      return res.status(404).json({ message: 'Placement form not found or inactive' });
+    }
+
+    if (placement.expiryDate && new Date(placement.expiryDate) < new Date()) {
+      return res.status(400).json({ message: 'This placement form has expired' });
+    }
+
+    res.json({
+      placementId: placement._id,
+      formTitle: placement.formTitle,
+      description: placement.description,
+      companyName: placement.companyName,
+      jobRole: placement.jobRole,
+      jobLocation: placement.jobLocation,
+      salaryPackage: placement.salaryPackage,
+      eligibilityCriteria: placement.eligibilityCriteria,
+      expiryDate: placement.expiryDate
+    });
+  } catch (error) {
+    console.error('Error fetching public placement:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST: Submit application (Student fills basic details)
+router.post('/public/submit', async (req, res) => {
+  try {
+    const {
+      placementId,
+      studentName,
+      studentEmail,
+      studentPhone,
+      fatherName,
+      courseType,
+      courseTiming,
+      resumeLink
+    } = req.body;
+
+    // Validate required fields
+    if (!placementId || !studentName || !studentEmail || !studentPhone) {
+      return res.status(400).json({ 
+        message: 'Name, Email, and Phone are required' 
+      });
+    }
+
+    const placement = await Placement.findById(placementId);
+    if (!placement || !placement.isActive) {
+      return res.status(404).json({ message: 'Placement form not available' });
+    }
+
+    // Check if already applied
+    const existingApplication = await PlacementApplication.findOne({
+      placementForm: placementId,
+      studentEmail: studentEmail.toLowerCase()
+    });
+
+    if (existingApplication) {
+      return res.status(400).json({ 
+        message: 'You have already applied for this placement' 
+      });
+    }
+
+    // Create application
+    const application = new PlacementApplication({
+      placementForm: placementId,
+      studentName,
+      studentEmail: studentEmail.toLowerCase(),
+      studentPhone,
+      fatherName: fatherName || '',
+      courseType: courseType || 'Silver',
+      courseTiming: courseTiming || '',
+      resumeLink: resumeLink || '',
+      status: 'pending'
+    });
+
+    await application.save();
+
+    // Add to placement's applications array
+    placement.applications.push(application._id);
+    await placement.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Application submitted successfully!',
+      applicationId: application._id
+    });
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============ COUNSELOR ROUTES ============
+
+// GET: All applications (for counselor tracker)
 router.get('/applications/all', protect, async (req, res) => {
   try {
-    console.log('📋 Fetching all student applications for tracker...');
     const applications = await PlacementApplication.find()
-      .populate('placementForm', 'formTitle companyName') // Optional: populates placement details
-      .sort({ createdAt: -1 });
+      .populate('placementForm', 'formTitle companyName')
+      .sort({ appliedAt: -1 });
 
     res.json(applications);
   } catch (error) {
@@ -393,13 +310,30 @@ router.get('/applications/all', protect, async (req, res) => {
   }
 });
 
-// 2. COUNSELLOR UPDATE (Training details ONLY)
-// ============ COUNSELLOR UPDATE ROUTE ============
+// GET: Single application with interview logs
+router.get('/applications/:id', protect, async (req, res) => {
+  try {
+    const application = await PlacementApplication.findById(req.params.id)
+      .populate('placementForm', 'formTitle companyName')
+      .populate('interviewLogs.updatedBy', 'name email');
+
+    if (!application) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+
+    res.json(application);
+  } catch (error) {
+    console.error('Error fetching application:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT: Update application (Counselor inline update)
 router.put('/applications/:applicationId/counsellor-update', protect, async (req, res) => {
   try {
     const { applicationId } = req.params;
     const { 
-      batchName, 
+      branch,
       courseType, 
       totalFees, 
       feesPaid, 
@@ -414,113 +348,22 @@ router.put('/applications/:applicationId/counsellor-update', protect, async (req
       return res.status(404).json({ message: 'Student application not found' });
     }
 
-    // Update training fields
-    if (batchName !== undefined) application.batchName = batchName;
+    // Update fields
+    if (branch !== undefined) application.branch = branch;
     if (courseType !== undefined) application.courseType = courseType;
     if (joinedDate !== undefined) application.joinedDate = joinedDate ? new Date(joinedDate) : null;
     if (endedDate !== undefined) application.endedDate = endedDate ? new Date(endedDate) : null;
 
-    // Update Fees (with auto-calculation)
-    if (totalFees !== undefined) application.totalFees = totalFees;
-    if (feesPaid !== undefined) application.feesPaid = feesPaid;
+    // Update Fees
+    if (totalFees !== undefined) application.totalFees = Number(totalFees);
+    if (feesPaid !== undefined) application.feesPaid = Number(feesPaid);
     application.feesPending = application.totalFees - application.feesPaid;
     application.dueClear = application.feesPending <= 0;
 
-    // ✅ NEW: Update Interview Stats and Auto-Calculate Selected
-    if (totalInterviewsGiven !== undefined) application.totalInterviewsGiven = totalInterviewsGiven;
-    if (totalInterviewsRejected !== undefined) application.totalInterviewsRejected = totalInterviewsRejected;
+    // Update Interview Stats
+    if (totalInterviewsGiven !== undefined) application.totalInterviewsGiven = Number(totalInterviewsGiven);
+    if (totalInterviewsRejected !== undefined) application.totalInterviewsRejected = Number(totalInterviewsRejected);
     
-    // ✅ Auto-calculate Selected based on Given - Rejected
-    application.totalInterviewsSelected = application.totalInterviewsGiven - application.totalInterviewsRejected;
-
-    // ✅ Auto-calculate Shortlisted (for display, default 0 since we are not tracking it directly)
-    application.totalInterviewsShortlisted = 0;
-
-    await application.save();
-
-    res.json({
-      success: true,
-      message: 'Student updated successfully',
-      application
-    });
-
-  } catch (error) {
-    console.error('Error updating student:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// ============ COUNSELLOR INTERVIEW LOG ROUTE ============
-// Counsellor adds a new interview record for a student
-router.post('/applications/:applicationId/interview', protect, async (req, res) => {
-  try {
-    const { applicationId } = req.params;
-    const { status } = req.body; // status: "shortlisted", "selected", "rejected"
-
-    const application = await PlacementApplication.findById(applicationId);
-    if (!application) {
-      return res.status(404).json({ message: 'Student application not found' });
-    }
-
-    // Add the new interview to the array
-    application.interviews.push({
-      date: new Date(),
-      status: status
-    });
-
-    // Update the main status field as well (optional, but good for quick display)
-    application.status = status;
-
-    await application.save();
-
-    res.json({
-      success: true,
-      message: 'Interview logged successfully',
-      application
-    });
-
-  } catch (error) {
-    console.error('Error logging interview:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// ============ COUNSELLOR UPDATE ROUTE ============
-router.put('/applications/:applicationId/counsellor-update', protect, async (req, res) => {
-  try {
-    const { applicationId } = req.params;
-    const { 
-      batchName, 
-      courseType, 
-      totalFees, 
-      feesPaid, 
-      joinedDate, 
-      endedDate, 
-      totalInterviewsGiven,
-      totalInterviewsRejected
-    } = req.body;
-
-    const application = await PlacementApplication.findById(applicationId);
-    if (!application) {
-      return res.status(404).json({ message: 'Student application not found' });
-    }
-
-    // Update training fields
-    if (batchName !== undefined) application.batchName = batchName;
-    if (courseType !== undefined) application.courseType = courseType;
-    if (joinedDate !== undefined) application.joinedDate = joinedDate ? new Date(joinedDate) : null;
-    if (endedDate !== undefined) application.endedDate = endedDate ? new Date(endedDate) : null;
-
-    // Update Fees (with auto-calculation)
-    if (totalFees !== undefined) application.totalFees = totalFees;
-    if (feesPaid !== undefined) application.feesPaid = feesPaid;
-    application.feesPending = application.totalFees - application.feesPaid;
-    application.dueClear = application.feesPending <= 0;
-
-    // ✅ NEW: Update Interview Stats
-    if (totalInterviewsGiven !== undefined) application.totalInterviewsGiven = totalInterviewsGiven;
-    if (totalInterviewsRejected !== undefined) application.totalInterviewsRejected = totalInterviewsRejected;
-
     // Auto-calculate Selected
     application.totalInterviewsSelected = application.totalInterviewsGiven - application.totalInterviewsRejected;
 
@@ -531,10 +374,74 @@ router.put('/applications/:applicationId/counsellor-update', protect, async (req
       message: 'Student updated successfully',
       application
     });
-
   } catch (error) {
     console.error('Error updating student:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST: Add interview log
+router.post('/applications/:applicationId/interview', protect, async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { status, notes } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ message: 'Status is required' });
+    }
+
+    const application = await PlacementApplication.findById(applicationId);
+    if (!application) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+
+    // Add interview log
+    application.interviewLogs.push({
+      date: new Date(),
+      status: status,
+      notes: notes || '',
+      updatedBy: req.user._id
+    });
+
+    // Update main status
+    application.status = status;
+
+    // Update interview counts based on status
+    if (status === 'shortlisted') {
+      application.totalInterviewsShortlisted += 1;
+    } else if (status === 'selected') {
+      application.totalInterviewsSelected += 1;
+    } else if (status === 'rejected') {
+      application.totalInterviewsRejected += 1;
+    }
+    application.totalInterviewsGiven = application.interviewLogs.length;
+
+    await application.save();
+
+    res.json({
+      success: true,
+      message: 'Interview logged successfully',
+      application
+    });
+  } catch (error) {
+    console.error('Error logging interview:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET: Applications for a specific placement
+router.get('/applications/placement/:placementId', protect, async (req, res) => {
+  try {
+    const { placementId } = req.params;
+    
+    const applications = await PlacementApplication.find({
+      placementForm: placementId
+    }).sort({ appliedAt: -1 });
+
+    res.json(applications);
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
