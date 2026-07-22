@@ -82,8 +82,22 @@ router.put("/teachers/:id", async (req, res) => {
 // DELETE /api/admin/teachers/:id
 router.delete("/teachers/:id", async (req, res) => {
   try {
+    // Remove teacher reference from all students
+    await Student.updateMany(
+      { teacher: req.params.id },
+      { $unset: { teacher: "" } },
+    );
+
+    // Remove teacher from any batches they created
+    const Batch = require("../models/Batch");
+    await Batch.updateMany(
+      { createdBy: req.params.id },
+      { $unset: { createdBy: "" } },
+    );
+
+    // Delete the teacher
     await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "Teacher deleted" });
+    res.json({ message: "Teacher deleted successfully" });
   } catch (err) {
     console.error("Error deleting teacher:", err);
     res.status(500).json({ message: "Server error" });
@@ -97,7 +111,7 @@ router.get("/counsellors", async (req, res) => {
   try {
     const counsellors = await User.find({ role: "counsellor" })
       .select("-password")
-      .populate("students", "name rollNumber subjects");
+      .populate("students", "name email subjects phone fatherName");
     res.json(counsellors);
   } catch (err) {
     console.error("Error fetching counsellors:", err);
@@ -147,7 +161,7 @@ router.put("/counsellors/:id", async (req, res) => {
       new: true,
     })
       .select("-password")
-      .populate("students", "name rollNumber");
+      .populate("students", "name email subjects phone");
     if (!counsellor)
       return res.status(404).json({ message: "Counsellor not found" });
     res.json(counsellor);
@@ -160,8 +174,14 @@ router.put("/counsellors/:id", async (req, res) => {
 // DELETE /api/admin/counsellors/:id
 router.delete("/counsellors/:id", async (req, res) => {
   try {
+    // Remove counsellor reference from all students
+    await Student.updateMany(
+      { counsellor: req.params.id },
+      { $unset: { counsellor: "" } },
+    );
+
     await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "Counsellor deleted" });
+    res.json({ message: "Counsellor deleted successfully" });
   } catch (err) {
     console.error("Error deleting counsellor:", err);
     res.status(500).json({ message: "Server error" });
@@ -223,7 +243,7 @@ router.post("/students/assign-teacher", async (req, res) => {
       return res.status(404).json({ message: "Teacher not found" });
     }
 
-    // 🆕 VALIDATION: Check if student has at least one subject that matches teacher's subjects
+    // VALIDATION: Check if student has at least one subject that matches teacher's subjects
     const studentSubjects = (student.subjects || []).map((s) =>
       s.trim().toUpperCase(),
     );
@@ -253,11 +273,20 @@ router.post("/students/assign-teacher", async (req, res) => {
       });
     }
 
-    // Update student with teacher
+    // If student already has a teacher, remove from old teacher's list
+    if (student.teacher) {
+      const oldTeacherId = student.teacher;
+      await User.findByIdAndUpdate(oldTeacherId, {
+        $pull: { students: studentId },
+      });
+      console.log(`✅ Removed student from old teacher: ${oldTeacherId}`);
+    }
+
+    // Update student with new teacher
     student.teacher = teacherId;
     await student.save();
 
-    // Add student to teacher's students list
+    // Add student to new teacher's students list
     await User.findByIdAndUpdate(teacherId, {
       $addToSet: { students: studentId },
     });
@@ -277,6 +306,48 @@ router.post("/students/assign-teacher", async (req, res) => {
   }
 });
 
+// DELETE /api/admin/students/:studentId/teacher - Remove teacher from student
+router.delete("/students/:studentId/teacher", async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+
+    if (!student.teacher) {
+      return res
+        .status(400)
+        .json({ message: "Student has no teacher assigned" });
+    }
+
+    const oldTeacherId = student.teacher;
+
+    // Remove student from teacher's students list
+    await User.findByIdAndUpdate(oldTeacherId, {
+      $pull: { students: studentId },
+    });
+
+    // Remove teacher from student
+    student.teacher = null;
+    await student.save();
+
+    await student.populate("addedBy", "name email role");
+    await student.populate("counsellor", "name email");
+    await student.populate("teacher", "name email subjects");
+
+    res.json({
+      success: true,
+      message: "Teacher removed from student successfully",
+      student,
+    });
+  } catch (err) {
+    console.error("Error removing teacher:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // GET /api/admin/teachers/:id/students - Get students assigned to a teacher
 router.get("/teachers/:id/students", async (req, res) => {
   try {
@@ -292,6 +363,127 @@ router.get("/teachers/:id/students", async (req, res) => {
     res.json(teacher.students || []);
   } catch (err) {
     console.error("Error fetching teacher students:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ===== GET ALL USERS (for dropdowns) =====
+
+// GET /api/admin/users - Get all users (admin only)
+router.get("/users", async (req, res) => {
+  try {
+    const { role } = req.query;
+    let filter = {};
+    if (role) {
+      filter.role = role;
+    }
+    const users = await User.find(filter)
+      .select("name email role subjects specialization")
+      .sort({ name: 1 });
+    res.json(users);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ===== BULK ASSIGN TEACHER TO MULTIPLE STUDENTS =====
+
+// POST /api/admin/students/bulk-assign-teacher - Assign teacher to multiple students
+router.post("/students/bulk-assign-teacher", async (req, res) => {
+  try {
+    const { studentIds, teacherId } = req.body;
+
+    if (!studentIds || studentIds.length === 0 || !teacherId) {
+      return res
+        .status(400)
+        .json({ message: "Student IDs and Teacher ID required" });
+    }
+
+    const teacher = await User.findById(teacherId);
+    if (!teacher || teacher.role !== "teacher") {
+      return res.status(404).json({ message: "Teacher not found" });
+    }
+
+    const teacherSubjects = (teacher.subjects || []).map((s) =>
+      s.trim().toUpperCase(),
+    );
+
+    if (teacherSubjects.length === 0) {
+      return res.status(400).json({
+        message:
+          "This teacher has no subjects assigned. Please assign subjects to the teacher first.",
+      });
+    }
+
+    const results = {
+      assigned: [],
+      failed: [],
+    };
+
+    for (const studentId of studentIds) {
+      try {
+        const student = await Student.findById(studentId);
+        if (!student) {
+          results.failed.push({ studentId, reason: "Student not found" });
+          continue;
+        }
+
+        const studentSubjects = (student.subjects || []).map((s) =>
+          s.trim().toUpperCase(),
+        );
+
+        const hasMatchingSubject = studentSubjects.some((sub) =>
+          teacherSubjects.includes(sub),
+        );
+
+        if (!hasMatchingSubject) {
+          results.failed.push({
+            studentId,
+            studentName: student.name,
+            reason: `No matching subjects (Student: ${studentSubjects.join(", ")})`,
+          });
+          continue;
+        }
+
+        // Remove from old teacher if exists
+        if (student.teacher) {
+          await User.findByIdAndUpdate(student.teacher, {
+            $pull: { students: studentId },
+          });
+        }
+
+        // Assign to new teacher
+        student.teacher = teacherId;
+        await student.save();
+
+        await User.findByIdAndUpdate(teacherId, {
+          $addToSet: { students: studentId },
+        });
+
+        results.assigned.push({
+          studentId,
+          studentName: student.name,
+          matchingSubjects: studentSubjects.filter((s) =>
+            teacherSubjects.includes(s),
+          ),
+        });
+      } catch (err) {
+        console.error(`Error assigning student ${studentId}:`, err);
+        results.failed.push({
+          studentId,
+          reason: err.message || "Unknown error",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Assigned ${results.assigned.length} students, ${results.failed.length} failed`,
+      results,
+    });
+  } catch (err) {
+    console.error("Error in bulk assign:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
