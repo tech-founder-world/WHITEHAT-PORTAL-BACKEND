@@ -12,8 +12,8 @@ const userSchema = new mongoose.Schema(
       required: true,
     },
     subjects: [{ type: String }], // assigned subjects (for teachers)
-    specialization: { type: String, trim: true }, // for counsellors
-    students: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }], // assigned students for counsellors
+    specialization: { type: String, trim: true },
+    students: [{ type: mongoose.Schema.Types.ObjectId, ref: "Student" }],
   },
   { timestamps: true },
 );
