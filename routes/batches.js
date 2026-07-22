@@ -1,278 +1,365 @@
 const express = require("express");
 const router = express.Router();
-const { Batch, defaultBatches } = require("../models/Batch");
+const Batch = require("../models/Batch");
 const Student = require("../models/Student");
-const User = require("../models/User");
-const Project = require("../models/Project");
 const { protect } = require("../middleware/auth");
 
 // All routes require authentication
 router.use(protect);
 
-// GET /api/batches - Get all batches
+// GET: Fetch all batches
 router.get("/", async (req, res) => {
   try {
     let filter = {};
 
-    if (req.user.role === "counsellor") {
-      // Counsellor sees their own batches
-      filter.counsellor = req.user._id;
-    } else if (req.user.role === "admin") {
-      // Admin sees all batches
-    } else if (req.user.role === "teacher") {
-      // Teacher sees batches that have their students
-      const teacherProjects = await Project.find({
-        teacher: req.user._id,
-      }).select("_id");
-      const projectIds = teacherProjects.map((p) => p._id);
-      const batchesWithProjects = await Batch.find({
-        project: { $in: projectIds },
-      }).select("_id");
-      const batchIds = batchesWithProjects.map((b) => b._id);
-
-      // Also get batches where teacher's students are enrolled
-      const teacherStudents = await Student.find({
-        teacher: req.user._id,
-      }).select("_id");
-      const studentIds = teacherStudents.map((s) => s._id);
-      const batchesWithStudents = await Batch.find({
-        students: { $in: studentIds },
-      }).select("_id");
-
-      filter._id = {
-        $in: [...batchIds, ...batchesWithStudents.map((b) => b._id)],
-      };
+    if (req.user.role === "teacher") {
+      // Teachers see batches they created
+      filter.createdBy = req.user._id;
+    } else if (req.user.role === "counsellor") {
+      // Counsellors see all batches (read-only)
+      // No filter - they can see all batches
     }
+    // Admin sees all batches (no filter)
 
     const batches = await Batch.find(filter)
-      .populate("counsellor", "name email")
-      .populate("students", "name rollNumber email")
-      .populate("project", "name subject")
+      .populate("createdBy", "name email role")
+      .populate(
+        "students",
+        "name fatherName email phone subjects totalFee paidAmount dueAmount status",
+      )
       .sort({ createdAt: -1 });
-
     res.json(batches);
-  } catch (err) {
-    console.error("Error fetching batches:", err);
-    res.status(500).json({ message: "Server error" });
+  } catch (error) {
+    console.error("❌ Error fetching batches:", error.message);
+    res.status(500).json({ message: "Server error fetching batches" });
   }
 });
 
-// GET /api/batches/default - Get or create default batches
-router.get("/default/create", async (req, res) => {
-  try {
-    // Only counsellors and admins can create default batches
-    if (req.user.role !== "counsellor" && req.user.role !== "admin") {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const existingBatches = await Batch.find({
-      counsellor: req.user._id,
-      category: { $in: ["silver", "platinum", "premium"] },
-    });
-
-    const createdBatches = [];
-
-    for (const defaultBatch of defaultBatches) {
-      // Check if this default batch already exists for this counsellor
-      const exists = existingBatches.some(
-        (b) => b.category === defaultBatch.category,
-      );
-
-      if (!exists) {
-        const batch = await Batch.create({
-          ...defaultBatch,
-          counsellor: req.user._id,
-          status: "active",
-        });
-        createdBatches.push(batch);
-      }
-    }
-
-    // Get all batches for this counsellor
-    const allBatches = await Batch.find({ counsellor: req.user._id })
-      .populate("counsellor", "name email")
-      .populate("students", "name rollNumber")
-      .populate("project", "name subject");
-
-    res.json({
-      message:
-        createdBatches.length > 0
-          ? "Default batches created"
-          : "Default batches already exist",
-      batches: allBatches,
-    });
-  } catch (err) {
-    console.error("Error creating default batches:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// POST /api/batches - Create a new batch
-router.post("/", async (req, res) => {
-  try {
-    const {
-      name,
-      category,
-      duration,
-      durationType,
-      description,
-      startDate,
-      endDate,
-      maxStudents,
-      fee,
-      project,
-    } = req.body;
-
-    if (!name || !duration) {
-      return res
-        .status(400)
-        .json({ message: "Batch name and duration required" });
-    }
-
-    // Only counsellors and admins can create batches
-    if (req.user.role !== "counsellor" && req.user.role !== "admin") {
-      return res
-        .status(403)
-        .json({ message: "Only counsellors and admins can create batches" });
-    }
-
-    // REMOVED: students field from creation - counsellors cannot add students
-    const batch = await Batch.create({
-      name,
-      category: category || "custom",
-      duration,
-      durationType: durationType || "days",
-      description: description || "",
-      counsellor: req.user._id,
-      startDate: startDate || "",
-      endDate: endDate || "",
-      maxStudents: maxStudents || 30,
-      fee: fee || 0,
-      project: project || null,
-      students: [], // Always empty - students are added only by admin
-      status: "active",
-    });
-
-    await batch.populate("counsellor", "name email");
-    await batch.populate("students", "name rollNumber");
-    await batch.populate("project", "name subject");
-
-    res.status(201).json(batch);
-  } catch (err) {
-    console.error("Error creating batch:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-});
-
-// GET /api/batches/:id - Get single batch
+// GET: Get a single batch by ID
 router.get("/:id", async (req, res) => {
   try {
     const batch = await Batch.findById(req.params.id)
-      .populate("counsellor", "name email")
-      .populate("students", "name rollNumber email")
-      .populate("project", "name subject");
+      .populate("createdBy", "name email role")
+      .populate(
+        "students",
+        "name fatherName email phone subjects totalFee paidAmount dueAmount status",
+      );
 
     if (!batch) {
       return res.status(404).json({ message: "Batch not found" });
     }
 
-    // Check access
-    if (req.user.role === "admin") {
-      // Admin can access all batches
-    } else if (req.user.role === "counsellor") {
-      if (batch.counsellor._id.toString() !== req.user._id.toString()) {
-        return res
-          .status(403)
-          .json({ message: "Access denied - This is not your batch" });
-      }
-    } else if (req.user.role === "teacher") {
-      // Teacher can access if their students are in this batch
-      const teacherStudents = await Student.find({
-        teacher: req.user._id,
-      }).select("_id");
-      const studentIds = teacherStudents.map((s) => s._id.toString());
-      const hasAccess = batch.students.some((s) =>
-        studentIds.includes(s._id.toString()),
-      );
-      if (!hasAccess) {
-        return res.status(403).json({ message: "Access denied" });
-      }
+    // Check if user has access to this batch
+    if (
+      req.user.role === "teacher" &&
+      batch.createdBy._id.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You don't have access to this batch" });
     }
 
     res.json(batch);
-  } catch (err) {
-    console.error("Error fetching batch:", err);
+  } catch (error) {
+    console.error("❌ Error fetching batch:", error.message);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// PUT /api/batches/:id - Update batch
+// POST: Create a new batch
+router.post("/", async (req, res) => {
+  try {
+    // Only teachers and admins can create batches
+    if (req.user.role !== "teacher" && req.user.role !== "admin") {
+      return res
+        .status(403)
+        .json({ message: "Only teachers and admins can create batches" });
+    }
+
+    console.log("📝 Creating new batch:", req.body);
+
+    const newBatch = new Batch({
+      name: req.body.name,
+      description: req.body.description || "",
+      timing: req.body.timing || "",
+      startDate: req.body.startDate || null,
+      endDate: req.body.endDate || null,
+      maxStudents: req.body.maxStudents || 30,
+      fee: req.body.fee || 0,
+      createdBy: req.user._id,
+      students: req.body.students || [],
+      status: req.body.status || "active",
+      topics: req.body.topics || [],
+    });
+
+    const savedBatch = await newBatch.save();
+
+    // Update students with batch reference
+    if (req.body.students && req.body.students.length > 0) {
+      await Student.updateMany(
+        { _id: { $in: req.body.students } },
+        { $addToSet: { batches: savedBatch._id } },
+      );
+    }
+
+    const populatedBatch = await Batch.findById(savedBatch._id)
+      .populate("createdBy", "name email role")
+      .populate("students", "name fatherName email phone");
+
+    res.status(201).json({
+      success: true,
+      message: "Batch created successfully",
+      batch: populatedBatch,
+    });
+  } catch (error) {
+    console.error("❌ Server Error creating batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT: Update a batch
 router.put("/:id", async (req, res) => {
   try {
-    const {
-      name,
-      category,
-      duration,
-      durationType,
-      description,
-      startDate,
-      endDate,
-      maxStudents,
-      fee,
-      project,
-      status,
-    } = req.body;
+    console.log("✏️ Updating batch:", req.params.id);
 
     const batch = await Batch.findById(req.params.id);
     if (!batch) {
       return res.status(404).json({ message: "Batch not found" });
     }
 
-    // Only counsellor who created it or admin can update
-    if (req.user.role === "admin") {
-      // Admin can update any batch
-    } else if (req.user.role === "counsellor") {
-      if (batch.counsellor.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          message: "Access denied - You can only update your own batches",
-        });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      batch.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only edit your own batches" });
     }
 
-    // REMOVED: students field from update - only admin can manage students
-    const updated = await Batch.findByIdAndUpdate(
-      req.params.id,
-      {
-        name: name || batch.name,
-        category: category || batch.category,
-        duration: duration || batch.duration,
-        durationType: durationType || batch.durationType,
-        description:
-          description !== undefined ? description : batch.description,
-        startDate: startDate || batch.startDate,
-        endDate: endDate || batch.endDate,
-        maxStudents: maxStudents || batch.maxStudents,
-        fee: fee !== undefined ? fee : batch.fee,
-        project: project || batch.project,
-        status: status || batch.status,
-        // students field is NOT updated here - only admin can change it
-      },
-      { new: true },
-    )
-      .populate("counsellor", "name email")
-      .populate("students", "name rollNumber")
-      .populate("project", "name subject");
+    // Update fields
+    if (req.body.name) batch.name = req.body.name;
+    if (req.body.description !== undefined)
+      batch.description = req.body.description;
+    if (req.body.timing !== undefined) batch.timing = req.body.timing;
+    if (req.body.startDate) batch.startDate = req.body.startDate;
+    if (req.body.endDate) batch.endDate = req.body.endDate;
+    if (req.body.maxStudents !== undefined)
+      batch.maxStudents = req.body.maxStudents;
+    if (req.body.fee !== undefined) batch.fee = req.body.fee;
+    if (req.body.status) batch.status = req.body.status;
 
-    res.json(updated);
-  } catch (err) {
-    console.error("Error updating batch:", err);
-    res.status(500).json({ message: "Server error" });
+    // Handle topics
+    if (req.body.topics && Array.isArray(req.body.topics)) {
+      batch.topics = req.body.topics;
+    }
+
+    // Handle students - Teachers can add students to their batches
+    if (req.body.studentIds && Array.isArray(req.body.studentIds)) {
+      // Teacher can add students that are assigned to them
+      if (req.user.role === "teacher") {
+        // Get students assigned to this teacher
+        const teacherStudents = await Student.find({
+          teacher: req.user._id,
+        }).select("_id");
+        const teacherStudentIds = teacherStudents.map((s) => s._id.toString());
+
+        // Filter only students assigned to this teacher
+        const validStudentIds = req.body.studentIds.filter((id) =>
+          teacherStudentIds.includes(id.toString()),
+        );
+
+        // Add valid students to batch
+        validStudentIds.forEach((id) => {
+          if (!batch.students.includes(id)) {
+            batch.students.push(id);
+          }
+        });
+
+        // Update students with batch reference
+        await Student.updateMany(
+          { _id: { $in: validStudentIds } },
+          { $addToSet: { batches: batch._id } },
+        );
+      } else if (req.user.role === "admin") {
+        // Admin can add any student
+        req.body.studentIds.forEach((id) => {
+          if (!batch.students.includes(id)) {
+            batch.students.push(id);
+          }
+        });
+
+        // Update students with batch reference
+        await Student.updateMany(
+          { _id: { $in: req.body.studentIds } },
+          { $addToSet: { batches: batch._id } },
+        );
+      }
+    }
+
+    await batch.save();
+
+    const updatedBatch = await Batch.findById(batch._id)
+      .populate("createdBy", "name email role")
+      .populate(
+        "students",
+        "name fatherName email phone totalFee paidAmount dueAmount status",
+      );
+
+    res.json({
+      success: true,
+      message: "Batch updated successfully",
+      batch: updatedBatch,
+    });
+  } catch (error) {
+    console.error("❌ Error updating batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// DELETE /api/batches/:id - Delete batch
+// POST: Add students to batch (Teacher route)
+router.post("/:id/add-students", async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+
+    if (!studentIds || studentIds.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Please select at least one student" });
+    }
+
+    const batch = await Batch.findById(req.params.id);
+    if (!batch) {
+      return res.status(404).json({ message: "Batch not found" });
+    }
+
+    // Check if teacher owns this batch
+    if (
+      req.user.role === "teacher" &&
+      batch.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "You can only add students to your own batches",
+      });
+    }
+
+    // Check if batch is full
+    if (batch.students.length + studentIds.length > batch.maxStudents) {
+      return res.status(400).json({
+        message: `Batch is full. Max capacity: ${batch.maxStudents}, Current: ${batch.students.length}`,
+      });
+    }
+
+    // If teacher, verify students are assigned to them
+    let validStudentIds = studentIds;
+    if (req.user.role === "teacher") {
+      const teacherStudents = await Student.find({
+        teacher: req.user._id,
+      }).select("_id");
+      const teacherStudentIds = teacherStudents.map((s) => s._id.toString());
+
+      validStudentIds = studentIds.filter((id) =>
+        teacherStudentIds.includes(id.toString()),
+      );
+
+      if (validStudentIds.length === 0) {
+        return res.status(400).json({
+          message: "None of the selected students are assigned to you",
+        });
+      }
+
+      const invalidCount = studentIds.length - validStudentIds.length;
+      if (invalidCount > 0) {
+        console.log(
+          `⚠️ Skipping ${invalidCount} students not assigned to this teacher`,
+        );
+      }
+    }
+
+    // Add students to batch (avoid duplicates)
+    const addedStudents = [];
+    validStudentIds.forEach((id) => {
+      if (!batch.students.includes(id)) {
+        batch.students.push(id);
+        addedStudents.push(id);
+      }
+    });
+
+    await batch.save();
+
+    // Update students with batch reference
+    if (addedStudents.length > 0) {
+      await Student.updateMany(
+        { _id: { $in: addedStudents } },
+        { $addToSet: { batches: batch._id } },
+      );
+    }
+
+    const updatedBatch = await Batch.findById(batch._id)
+      .populate("createdBy", "name email role")
+      .populate(
+        "students",
+        "name fatherName email phone totalFee paidAmount dueAmount status",
+      );
+
+    res.json({
+      success: true,
+      message: `Added ${addedStudents.length} students to batch`,
+      batch: updatedBatch,
+    });
+  } catch (error) {
+    console.error("❌ Error adding students to batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE: Remove student from batch
+router.delete("/:batchId/students/:studentId", async (req, res) => {
+  try {
+    const batch = await Batch.findById(req.params.batchId);
+    if (!batch) {
+      return res.status(404).json({ message: "Batch not found" });
+    }
+
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      batch.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({
+          message: "You can only remove students from your own batches",
+        });
+    }
+
+    // Remove student from batch
+    batch.students = batch.students.filter(
+      (id) => id.toString() !== req.params.studentId,
+    );
+    await batch.save();
+
+    // Remove batch from student
+    await Student.findByIdAndUpdate(req.params.studentId, {
+      $pull: { batches: batch._id },
+    });
+
+    const updatedBatch = await Batch.findById(batch._id)
+      .populate("createdBy", "name email role")
+      .populate("students", "name fatherName email phone");
+
+    res.json({
+      success: true,
+      message: "Student removed from batch",
+      batch: updatedBatch,
+    });
+  } catch (error) {
+    console.error("❌ Error removing student from batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE: Delete a batch
 router.delete("/:id", async (req, res) => {
   try {
     const batch = await Batch.findById(req.params.id);
@@ -280,17 +367,14 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "Batch not found" });
     }
 
-    // Only counsellor who created it or admin can delete
-    if (req.user.role === "admin") {
-      // Admin can delete any batch
-    } else if (req.user.role === "counsellor") {
-      if (batch.counsellor.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          message: "Access denied - You can only delete your own batches",
-        });
-      }
-    } else {
-      return res.status(403).json({ message: "Access denied" });
+    // Check permissions
+    if (
+      req.user.role === "teacher" &&
+      batch.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ message: "You can only delete your own batches" });
     }
 
     // Remove batch reference from students
@@ -300,94 +384,55 @@ router.delete("/:id", async (req, res) => {
     );
 
     await batch.deleteOne();
-    res.json({ message: "Batch deleted successfully" });
-  } catch (err) {
-    console.error("Error deleting batch:", err);
-    res.status(500).json({ message: "Server error" });
+    res.json({
+      success: true,
+      message: "Batch deleted successfully",
+    });
+  } catch (error) {
+    console.error("❌ Error deleting batch:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ============================================
-// ADMIN ONLY ROUTES - Student Management
-// ============================================
-
-// POST /api/batches/:id/students - Add students to batch (ADMIN ONLY)
-router.post("/:id/students", async (req, res) => {
+// POST: Add topic to batch
+router.post("/:id/topics", async (req, res) => {
   try {
-    const { studentIds } = req.body;
-    if (!studentIds || studentIds.length === 0) {
-      return res.status(400).json({ message: "Student IDs required" });
-    }
-
-    // ADMIN ONLY - Check if user is admin
-    if (req.user.role !== "admin") {
-      return res.status(403).json({
-        message: "Access denied - Only admins can add students to batches",
-      });
-    }
-
     const batch = await Batch.findById(req.params.id);
     if (!batch) {
       return res.status(404).json({ message: "Batch not found" });
     }
 
-    // Check if batch is full
-    if (batch.students.length + studentIds.length > batch.maxStudents) {
-      return res.status(400).json({
-        message: `Batch is full. Max capacity: ${batch.maxStudents}`,
-      });
+    // Only teacher who created the batch can add topics
+    if (batch.createdBy.toString() !== req.user._id.toString()) {
+      return res
+        .status(403)
+        .json({ message: "You can only add topics to your own batches" });
     }
 
-    // Add students (avoid duplicates)
-    const updated = await Batch.findByIdAndUpdate(
-      req.params.id,
-      { $addToSet: { students: { $each: studentIds } } },
-      { new: true },
-    ).populate("students", "name rollNumber");
-
-    // Update students with batch reference
-    await Student.updateMany(
-      { _id: { $in: studentIds } },
-      { $addToSet: { batches: batch._id } },
-    );
-
-    res.json(updated);
-  } catch (err) {
-    console.error("Error adding students:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// DELETE /api/batches/:id/students/:studentId - Remove student from batch (ADMIN ONLY)
-router.delete("/:id/students/:studentId", async (req, res) => {
-  try {
-    // ADMIN ONLY - Check if user is admin
-    if (req.user.role !== "admin") {
-      return res.status(403).json({
-        message: "Access denied - Only admins can remove students from batches",
-      });
+    const { topic, date } = req.body;
+    if (!topic) {
+      return res.status(400).json({ message: "Topic is required" });
     }
 
-    const batch = await Batch.findById(req.params.id);
-    if (!batch) {
-      return res.status(404).json({ message: "Batch not found" });
-    }
-
-    const updated = await Batch.findByIdAndUpdate(
-      req.params.id,
-      { $pull: { students: req.params.studentId } },
-      { new: true },
-    ).populate("students", "name rollNumber");
-
-    // Remove batch from student
-    await Student.findByIdAndUpdate(req.params.studentId, {
-      $pull: { batches: batch._id },
+    batch.topics.push({
+      topic,
+      date: date || new Date().toISOString().split("T")[0],
     });
 
-    res.json(updated);
-  } catch (err) {
-    console.error("Error removing student:", err);
-    res.status(500).json({ message: "Server error" });
+    await batch.save();
+
+    const updatedBatch = await Batch.findById(batch._id)
+      .populate("createdBy", "name email")
+      .populate("students", "name rollNumber");
+
+    res.json({
+      success: true,
+      message: "Topic added successfully",
+      batch: updatedBatch,
+    });
+  } catch (error) {
+    console.error("❌ Error adding topic:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

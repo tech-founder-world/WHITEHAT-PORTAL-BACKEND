@@ -7,30 +7,77 @@ const { protect } = require("../middleware/auth");
 
 router.use(protect);
 
+// ⚠️ IMPORTANT: This route MUST come BEFORE the /:id route
+// TEMPORARY ROUTE - Drop rollNumber index from Atlas
+router.delete("/drop-rollnumber-index", async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+
+    const collection = Student.collection;
+
+    // Get all indexes
+    const indexes = await collection.indexes();
+    console.log("Current indexes:", JSON.stringify(indexes, null, 2));
+
+    // Find and drop rollNumber_1 index
+    const rollNumberIndex = indexes.find((idx) => idx.name === "rollNumber_1");
+    if (rollNumberIndex) {
+      await collection.dropIndex("rollNumber_1");
+      const newIndexes = await collection.indexes();
+      res.json({
+        success: true,
+        message: "✅ rollNumber_1 index dropped successfully from Atlas!",
+        indexes: newIndexes,
+      });
+    } else {
+      res.json({
+        success: false,
+        message: "rollNumber_1 index not found. No action needed.",
+        indexes: indexes,
+      });
+    }
+  } catch (err) {
+    console.error("Error dropping index:", err);
+    res.status(500).json({
+      message: "Error dropping index",
+      error: err.message,
+    });
+  }
+});
+
 // GET /api/students - Get all students with filters
 router.get("/", async (req, res) => {
   try {
-    const { subject, search, addedBy } = req.query;
+    const { subject, search, addedBy, all } = req.query;
     let filter = {};
+
+    if (all === "true" && req.user.role === "admin") {
+      const students = await Student.find({})
+        .populate("addedBy", "name email role")
+        .populate("counsellor", "name email")
+        .sort({ createdAt: -1 });
+      return res.json(students);
+    }
 
     if (subject) {
       filter.subjects = subject;
     }
 
-    // Search by name or roll number
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
-        { rollNumber: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { fatherName: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
       ];
     }
 
-    // Filter by who added the student
     if (addedBy) {
       filter.addedBy = addedBy;
     }
 
-    // If counsellor, only show their students
     if (req.user.role === "counsellor") {
       const counsellor = await User.findById(req.user._id).populate("students");
       const assignedIds = counsellor.students.map((s) => s._id);
@@ -52,41 +99,45 @@ router.get("/", async (req, res) => {
 // POST /api/students - Create a new student
 router.post("/", async (req, res) => {
   try {
-    const {
-      name,
-      rollNumber,
-      email,
-      subjects,
-      phone,
-      class: className,
-      section,
-    } = req.body;
+    const { name, fatherName, email, phone, subjects, totalFee, paidAmount } =
+      req.body;
 
-    if (!name || !rollNumber) {
-      return res.status(400).json({ message: "Name and roll number required" });
+    if (!name || !fatherName || !email || !phone) {
+      return res.status(400).json({
+        message: "Name, father's name, email, and phone are required",
+      });
     }
 
-    // Check if roll number already exists
-    const existing = await Student.findOne({ rollNumber });
+    const cleanEmail = email.trim().toLowerCase();
+
+    const existing = await Student.findOne({
+      email: cleanEmail,
+    });
+
     if (existing) {
-      return res.status(400).json({ message: "Roll number already exists" });
+      return res.status(400).json({
+        message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.`,
+      });
     }
+
+    const total = totalFee || 0;
+    const paid = paidAmount || 0;
+    const due = total - paid;
 
     const student = await Student.create({
-      name,
-      rollNumber,
-      email: email || "",
+      name: name.trim(),
+      fatherName: fatherName.trim(),
+      email: cleanEmail,
+      phone: phone.trim(),
       subjects: subjects || [],
-      phone: phone || "",
-      class: className || "",
-      section: section || "",
+      totalFee: total,
+      paidAmount: paid,
+      dueAmount: due,
       addedBy: req.user._id,
       addedByRole: req.user.role,
-      // If counsellor is adding, assign them as counsellor
       counsellor: req.user.role === "counsellor" ? req.user._id : null,
     });
 
-    // If counsellor added student, add to counsellor's students list
     if (req.user.role === "counsellor") {
       await User.findByIdAndUpdate(req.user._id, {
         $addToSet: { students: student._id },
@@ -96,27 +147,38 @@ router.post("/", async (req, res) => {
     await student.populate("addedBy", "name email role");
     await student.populate("counsellor", "name email");
 
-    res.status(201).json(student);
+    res.status(201).json({
+      success: true,
+      message: "Student added successfully",
+      student,
+    });
   } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({ message: "Roll number already exists" });
-    }
     console.error("Error creating student:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+
+    if (err.code === 11000) {
+      return res.status(400).json({
+        message: `Email "${req.body.email}" is already registered. Please use a different email.`,
+      });
+    }
+
+    res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 });
 
-// PUT /api/students/:id - Update student
+// PUT /api/students/:id - Update student (this is the route that was conflicting)
 router.put("/:id", async (req, res) => {
   try {
     const {
       name,
-      rollNumber,
+      fatherName,
       email,
-      subjects,
       phone,
-      class: className,
-      section,
+      subjects,
+      totalFee,
+      paidAmount,
       counsellor,
     } = req.body;
 
@@ -125,7 +187,6 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ message: "Student not found" });
     }
 
-    // Check if user has permission to edit
     if (
       req.user.role === "counsellor" &&
       student.addedBy.toString() !== req.user._id.toString()
@@ -135,24 +196,34 @@ router.put("/:id", async (req, res) => {
         .json({ message: "You can only edit students you added" });
     }
 
-    // Check if roll number already exists (if changed)
-    if (rollNumber && rollNumber !== student.rollNumber) {
-      const existing = await Student.findOne({ rollNumber });
-      if (existing) {
-        return res.status(400).json({ message: "Roll number already exists" });
+    if (email) {
+      const cleanEmail = email.trim().toLowerCase();
+      if (cleanEmail !== student.email.toLowerCase()) {
+        const existing = await Student.findOne({ email: cleanEmail });
+        if (existing) {
+          return res.status(400).json({
+            message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.`,
+          });
+        }
       }
     }
+
+    const total = totalFee !== undefined ? totalFee : student.totalFee || 0;
+    const paid =
+      paidAmount !== undefined ? paidAmount : student.paidAmount || 0;
+    const due = total - paid;
 
     const updated = await Student.findByIdAndUpdate(
       req.params.id,
       {
-        name: name || student.name,
-        rollNumber: rollNumber || student.rollNumber,
-        email: email !== undefined ? email : student.email,
+        name: name ? name.trim() : student.name,
+        fatherName: fatherName ? fatherName.trim() : student.fatherName,
+        email: email ? email.trim().toLowerCase() : student.email,
+        phone: phone ? phone.trim() : student.phone,
         subjects: subjects !== undefined ? subjects : student.subjects,
-        phone: phone !== undefined ? phone : student.phone,
-        class: className !== undefined ? className : student.class,
-        section: section !== undefined ? section : student.section,
+        totalFee: total,
+        paidAmount: paid,
+        dueAmount: due,
         counsellor: counsellor !== undefined ? counsellor : student.counsellor,
       },
       { new: true, runValidators: true },
@@ -160,17 +231,23 @@ router.put("/:id", async (req, res) => {
       .populate("addedBy", "name email role")
       .populate("counsellor", "name email");
 
-    res.json(updated);
+    res.json({
+      success: true,
+      message: "Student updated successfully",
+      student: updated,
+    });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ message: "Roll number already exists" });
+      return res.status(400).json({
+        message: "Email already exists. Please use a different email address.",
+      });
     }
     console.error("Error updating student:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// DELETE /api/students/:id - Delete student
+// DELETE /api/students/:id - Delete student (this MUST come AFTER the custom route)
 router.delete("/:id", async (req, res) => {
   try {
     const student = await Student.findById(req.params.id);
@@ -178,7 +255,6 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "Student not found" });
     }
 
-    // Check if user has permission to delete
     if (
       req.user.role === "counsellor" &&
       student.addedBy.toString() !== req.user._id.toString()
@@ -188,17 +264,18 @@ router.delete("/:id", async (req, res) => {
         .json({ message: "You can only delete students you added" });
     }
 
-    // Delete student and their attendance records
     await Student.findByIdAndDelete(req.params.id);
     await Attendance.deleteMany({ student: req.params.id });
 
-    // Remove student from counsellor's list
     await User.updateMany(
       { students: req.params.id },
       { $pull: { students: req.params.id } },
     );
 
-    res.json({ message: "Student deleted successfully" });
+    res.json({
+      success: true,
+      message: "Student deleted successfully",
+    });
   } catch (err) {
     console.error("Error deleting student:", err);
     res.status(500).json({ message: "Server error" });
