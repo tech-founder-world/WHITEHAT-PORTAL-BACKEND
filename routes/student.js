@@ -7,56 +7,18 @@ const { protect } = require("../middleware/auth");
 
 router.use(protect);
 
-// ⚠️ IMPORTANT: This route MUST come BEFORE the /:id route
-// TEMPORARY ROUTE - Drop rollNumber index from Atlas
-router.delete("/drop-rollnumber-index", async (req, res) => {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-
-    const collection = Student.collection;
-
-    // Get all indexes
-    const indexes = await collection.indexes();
-    console.log("Current indexes:", JSON.stringify(indexes, null, 2));
-
-    // Find and drop rollNumber_1 index
-    const rollNumberIndex = indexes.find((idx) => idx.name === "rollNumber_1");
-    if (rollNumberIndex) {
-      await collection.dropIndex("rollNumber_1");
-      const newIndexes = await collection.indexes();
-      res.json({
-        success: true,
-        message: "✅ rollNumber_1 index dropped successfully from Atlas!",
-        indexes: newIndexes,
-      });
-    } else {
-      res.json({
-        success: false,
-        message: "rollNumber_1 index not found. No action needed.",
-        indexes: indexes,
-      });
-    }
-  } catch (err) {
-    console.error("Error dropping index:", err);
-    res.status(500).json({
-      message: "Error dropping index",
-      error: err.message,
-    });
-  }
-});
-
 // GET /api/students - Get all students with filters
 router.get("/", async (req, res) => {
   try {
     const { subject, search, addedBy, all } = req.query;
     let filter = {};
 
+    // If 'all' parameter is true, bypass all filters (admin only)
     if (all === "true" && req.user.role === "admin") {
       const students = await Student.find({})
         .populate("addedBy", "name email role")
         .populate("counsellor", "name email")
+        .populate("teacher", "name email subjects")
         .sort({ createdAt: -1 });
       return res.json(students);
     }
@@ -78,6 +40,23 @@ router.get("/", async (req, res) => {
       filter.addedBy = addedBy;
     }
 
+    // 🆕 For Teacher: Only show students that are assigned to this teacher AND have matching subjects
+    if (req.user.role === "teacher") {
+      const teacherSubjects = (req.user.subjects || []).map((s) =>
+        s.trim().toUpperCase(),
+      );
+
+      if (teacherSubjects.length === 0) {
+        // Teacher has no subjects assigned - return empty array
+        return res.json([]);
+      }
+
+      // Students must be assigned to this teacher AND have at least one matching subject
+      filter.teacher = req.user._id;
+      filter.subjects = { $in: teacherSubjects };
+    }
+
+    // If counsellor, only show their students
     if (req.user.role === "counsellor") {
       const counsellor = await User.findById(req.user._id).populate("students");
       const assignedIds = counsellor.students.map((s) => s._id);
@@ -87,6 +66,7 @@ router.get("/", async (req, res) => {
     const students = await Student.find(filter)
       .populate("addedBy", "name email role")
       .populate("counsellor", "name email")
+      .populate("teacher", "name email subjects")
       .sort({ createdAt: -1 });
 
     res.json(students);
@@ -120,6 +100,11 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // Capitalize subjects
+    const capitalizedSubjects = (subjects || []).map((sub) =>
+      sub.trim().toUpperCase(),
+    );
+
     const total = totalFee || 0;
     const paid = paidAmount || 0;
     const due = total - paid;
@@ -129,7 +114,7 @@ router.post("/", async (req, res) => {
       fatherName: fatherName.trim(),
       email: cleanEmail,
       phone: phone.trim(),
-      subjects: subjects || [],
+      subjects: capitalizedSubjects,
       totalFee: total,
       paidAmount: paid,
       dueAmount: due,
@@ -168,7 +153,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/students/:id - Update student (this is the route that was conflicting)
+// PUT /api/students/:id - Update student
 router.put("/:id", async (req, res) => {
   try {
     const {
@@ -208,6 +193,11 @@ router.put("/:id", async (req, res) => {
       }
     }
 
+    // Capitalize subjects
+    const capitalizedSubjects = (subjects || []).map((sub) =>
+      sub.trim().toUpperCase(),
+    );
+
     const total = totalFee !== undefined ? totalFee : student.totalFee || 0;
     const paid =
       paidAmount !== undefined ? paidAmount : student.paidAmount || 0;
@@ -220,7 +210,8 @@ router.put("/:id", async (req, res) => {
         fatherName: fatherName ? fatherName.trim() : student.fatherName,
         email: email ? email.trim().toLowerCase() : student.email,
         phone: phone ? phone.trim() : student.phone,
-        subjects: subjects !== undefined ? subjects : student.subjects,
+        subjects:
+          subjects !== undefined ? capitalizedSubjects : student.subjects,
         totalFee: total,
         paidAmount: paid,
         dueAmount: due,
@@ -229,7 +220,8 @@ router.put("/:id", async (req, res) => {
       { new: true, runValidators: true },
     )
       .populate("addedBy", "name email role")
-      .populate("counsellor", "name email");
+      .populate("counsellor", "name email")
+      .populate("teacher", "name email subjects");
 
     res.json({
       success: true,
@@ -247,7 +239,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// DELETE /api/students/:id - Delete student (this MUST come AFTER the custom route)
+// DELETE /api/students/:id - Delete student
 router.delete("/:id", async (req, res) => {
   try {
     const student = await Student.findById(req.params.id);

@@ -33,12 +33,17 @@ router.post("/teachers", async (req, res) => {
     if (existing)
       return res.status(400).json({ message: "Email already in use" });
 
+    // Capitalize all subjects
+    const capitalizedSubjects = (subjects || []).map((sub) =>
+      sub.trim().toUpperCase(),
+    );
+
     const teacher = await User.create({
       name,
       email,
       password,
       role: "teacher",
-      subjects: subjects || [],
+      subjects: capitalizedSubjects,
     });
     const { password: _, ...teacherData } = teacher.toObject();
     res.status(201).json(teacherData);
@@ -52,7 +57,13 @@ router.post("/teachers", async (req, res) => {
 router.put("/teachers/:id", async (req, res) => {
   try {
     const { name, email, subjects, password } = req.body;
-    const update = { name, email, subjects };
+
+    // Capitalize all subjects
+    const capitalizedSubjects = (subjects || []).map((sub) =>
+      sub.trim().toUpperCase(),
+    );
+
+    const update = { name, email, subjects: capitalizedSubjects };
     if (password) {
       const bcrypt = require("bcryptjs");
       update.password = await bcrypt.hash(password, 10);
@@ -107,14 +118,13 @@ router.post("/counsellors", async (req, res) => {
     if (existing)
       return res.status(400).json({ message: "Email already in use" });
 
-    // REMOVED: students field - admin does NOT assign students to counsellor
     const counsellor = await User.create({
       name,
       email,
       password,
       role: "counsellor",
       specialization: specialization || "",
-      students: [], // Always empty - students are added by counsellor themselves
+      students: [],
     });
     const { password: _, ...counsellorData } = counsellor.toObject();
     res.status(201).json(counsellorData);
@@ -133,7 +143,6 @@ router.put("/counsellors/:id", async (req, res) => {
       const bcrypt = require("bcryptjs");
       update.password = await bcrypt.hash(password, 10);
     }
-    // REMOVED: students from update - counsellor manages their own students
     const counsellor = await User.findByIdAndUpdate(req.params.id, update, {
       new: true,
     })
@@ -159,23 +168,23 @@ router.delete("/counsellors/:id", async (req, res) => {
   }
 });
 
-// ===== ASSIGN STUDENT TO TEACHER =====
+// ===== ASSIGN STUDENT TO TEACHER (With Subject Validation) =====
 
-// GET /api/admin/students - Get all students with filters (for admin)
+// GET /api/admin/students - Get all students with filters
 router.get("/students", async (req, res) => {
   try {
     const { search, addedBy } = req.query;
     let filter = {};
 
-    // Search by name or roll number
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
-        { rollNumber: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { fatherName: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
       ];
     }
 
-    // Filter by who added the student
     if (addedBy) {
       filter.addedBy = addedBy;
     }
@@ -183,6 +192,7 @@ router.get("/students", async (req, res) => {
     const students = await Student.find(filter)
       .populate("addedBy", "name email role")
       .populate("counsellor", "name email")
+      .populate("teacher", "name email subjects")
       .sort({ createdAt: -1 });
 
     res.json(students);
@@ -192,7 +202,7 @@ router.get("/students", async (req, res) => {
   }
 });
 
-// POST /api/admin/students/assign-teacher - Assign student to teacher
+// POST /api/admin/students/assign-teacher - Assign student to teacher with validation
 router.post("/students/assign-teacher", async (req, res) => {
   try {
     const { studentId, teacherId } = req.body;
@@ -213,6 +223,36 @@ router.post("/students/assign-teacher", async (req, res) => {
       return res.status(404).json({ message: "Teacher not found" });
     }
 
+    // 🆕 VALIDATION: Check if student has at least one subject that matches teacher's subjects
+    const studentSubjects = (student.subjects || []).map((s) =>
+      s.trim().toUpperCase(),
+    );
+    const teacherSubjects = (teacher.subjects || []).map((s) =>
+      s.trim().toUpperCase(),
+    );
+
+    if (teacherSubjects.length === 0) {
+      return res.status(400).json({
+        message:
+          "This teacher has no subjects assigned. Please assign subjects to the teacher first.",
+      });
+    }
+
+    // Check if student has any subject matching teacher's subjects
+    const hasMatchingSubject = studentSubjects.some((sub) =>
+      teacherSubjects.includes(sub),
+    );
+
+    if (!hasMatchingSubject) {
+      return res.status(400).json({
+        message: `Student (${student.name}) has subjects: ${studentSubjects.join(", ") || "None"}. 
+                  Teacher (${teacher.name}) teaches: ${teacherSubjects.join(", ")}. 
+                  Student must have at least one matching subject to be assigned to this teacher.`,
+        studentSubjects: studentSubjects,
+        teacherSubjects: teacherSubjects,
+      });
+    }
+
     // Update student with teacher
     student.teacher = teacherId;
     await student.save();
@@ -224,10 +264,11 @@ router.post("/students/assign-teacher", async (req, res) => {
 
     await student.populate("addedBy", "name email role");
     await student.populate("counsellor", "name email");
-    await student.populate("teacher", "name email");
+    await student.populate("teacher", "name email subjects");
 
     res.json({
-      message: "Student assigned to teacher successfully",
+      success: true,
+      message: `Student assigned to teacher successfully. Matching subjects: ${studentSubjects.filter((s) => teacherSubjects.includes(s)).join(", ")}`,
       student,
     });
   } catch (err) {
@@ -241,7 +282,7 @@ router.get("/teachers/:id/students", async (req, res) => {
   try {
     const teacher = await User.findById(req.params.id).populate(
       "students",
-      "name rollNumber email subjects",
+      "name email subjects phone fatherName totalFee paidAmount dueAmount",
     );
 
     if (!teacher || teacher.role !== "teacher") {
