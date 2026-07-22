@@ -31,6 +31,12 @@ const placementApplicationSchema = new mongoose.Schema({
     status: { type: String, enum: ['shortlisted', 'selected', 'rejected', 'interview_scheduled'] }
   }],
 
+  // --- 🆕 NEW STATS FIELDS (To store the manual numbers from the Counsellor) ---
+  totalInterviewsGiven: { type: Number, default: 0 },
+  totalInterviewsRejected: { type: Number, default: 0 },
+  totalInterviewsSelected: { type: Number, default: 0 },   // Auto-calculated
+  totalInterviewsShortlisted: { type: Number, default: 0 }, // Auto-calculated
+
   resumeLink: { type: String, trim: true },
   skills: [{ type: String }],
   experience: { type: String, trim: true },

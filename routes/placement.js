@@ -394,18 +394,19 @@ router.get('/applications/all', protect, async (req, res) => {
 });
 
 // 2. COUNSELLOR UPDATE (Training details ONLY)
+// ============ COUNSELLOR UPDATE ROUTE ============
 router.put('/applications/:applicationId/counsellor-update', protect, async (req, res) => {
   try {
     const { applicationId } = req.params;
     const { 
-      studentName, 
       batchName, 
       courseType, 
       totalFees, 
       feesPaid, 
       joinedDate, 
       endedDate, 
-      status 
+      totalInterviewsGiven,
+      totalInterviewsRejected
     } = req.body;
 
     const application = await PlacementApplication.findById(applicationId);
@@ -413,32 +414,38 @@ router.put('/applications/:applicationId/counsellor-update', protect, async (req
       return res.status(404).json({ message: 'Student application not found' });
     }
 
-    // Update basic fields
-    if (studentName !== undefined) application.studentName = studentName;
+    // Update training fields
     if (batchName !== undefined) application.batchName = batchName;
     if (courseType !== undefined) application.courseType = courseType;
     if (joinedDate !== undefined) application.joinedDate = joinedDate ? new Date(joinedDate) : null;
     if (endedDate !== undefined) application.endedDate = endedDate ? new Date(endedDate) : null;
-    if (status !== undefined) application.status = status;
 
-    // ✅ Update Fees Details (with auto-calculation)
+    // Update Fees (with auto-calculation)
     if (totalFees !== undefined) application.totalFees = totalFees;
     if (feesPaid !== undefined) application.feesPaid = feesPaid;
-    
-    // Auto-calculate pending and due status
     application.feesPending = application.totalFees - application.feesPaid;
     application.dueClear = application.feesPending <= 0;
+
+    // ✅ NEW: Update Interview Stats and Auto-Calculate Selected
+    if (totalInterviewsGiven !== undefined) application.totalInterviewsGiven = totalInterviewsGiven;
+    if (totalInterviewsRejected !== undefined) application.totalInterviewsRejected = totalInterviewsRejected;
+    
+    // ✅ Auto-calculate Selected based on Given - Rejected
+    application.totalInterviewsSelected = application.totalInterviewsGiven - application.totalInterviewsRejected;
+
+    // ✅ Auto-calculate Shortlisted (for display, default 0 since we are not tracking it directly)
+    application.totalInterviewsShortlisted = 0;
 
     await application.save();
 
     res.json({
       success: true,
-      message: 'Student training details updated successfully',
+      message: 'Student updated successfully',
       application
     });
 
   } catch (error) {
-    console.error('Error updating student from counsellor:', error);
+    console.error('Error updating student:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -474,6 +481,59 @@ router.post('/applications/:applicationId/interview', protect, async (req, res) 
 
   } catch (error) {
     console.error('Error logging interview:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============ COUNSELLOR UPDATE ROUTE ============
+router.put('/applications/:applicationId/counsellor-update', protect, async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { 
+      batchName, 
+      courseType, 
+      totalFees, 
+      feesPaid, 
+      joinedDate, 
+      endedDate, 
+      totalInterviewsGiven,
+      totalInterviewsRejected
+    } = req.body;
+
+    const application = await PlacementApplication.findById(applicationId);
+    if (!application) {
+      return res.status(404).json({ message: 'Student application not found' });
+    }
+
+    // Update training fields
+    if (batchName !== undefined) application.batchName = batchName;
+    if (courseType !== undefined) application.courseType = courseType;
+    if (joinedDate !== undefined) application.joinedDate = joinedDate ? new Date(joinedDate) : null;
+    if (endedDate !== undefined) application.endedDate = endedDate ? new Date(endedDate) : null;
+
+    // Update Fees (with auto-calculation)
+    if (totalFees !== undefined) application.totalFees = totalFees;
+    if (feesPaid !== undefined) application.feesPaid = feesPaid;
+    application.feesPending = application.totalFees - application.feesPaid;
+    application.dueClear = application.feesPending <= 0;
+
+    // ✅ NEW: Update Interview Stats
+    if (totalInterviewsGiven !== undefined) application.totalInterviewsGiven = totalInterviewsGiven;
+    if (totalInterviewsRejected !== undefined) application.totalInterviewsRejected = totalInterviewsRejected;
+
+    // Auto-calculate Selected
+    application.totalInterviewsSelected = application.totalInterviewsGiven - application.totalInterviewsRejected;
+
+    await application.save();
+
+    res.json({
+      success: true,
+      message: 'Student updated successfully',
+      application
+    });
+
+  } catch (error) {
+    console.error('Error updating student:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
