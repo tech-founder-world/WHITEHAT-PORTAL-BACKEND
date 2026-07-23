@@ -1,3 +1,4 @@
+// backend/models/Student.js
 const mongoose = require("mongoose");
 
 const studentSchema = new mongoose.Schema(
@@ -9,7 +10,12 @@ const studentSchema = new mongoose.Schema(
     subjects: [{ type: String, trim: true }],
     projects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Project" }],
     batches: [{ type: mongoose.Schema.Types.ObjectId, ref: "Batch" }],
-    // Simplified payment fields - only amounts
+    // 🆕 Batch Duration Field
+    batchDuration: {
+      type: String,
+      enum: ["45 days", "3 months", "4 months", "6 months"],
+      default: "45 days",
+    },
     totalFee: { type: Number, default: 0 },
     paidAmount: { type: Number, default: 0 },
     dueAmount: { type: Number, default: 0 },
@@ -29,7 +35,6 @@ const studentSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Add index on email for faster lookups
 studentSchema.index({ email: 1 });
 
 module.exports = mongoose.model("Student", studentSchema);

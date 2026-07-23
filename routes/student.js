@@ -13,7 +13,6 @@ router.get("/", async (req, res) => {
     const { subject, search, addedBy, all } = req.query;
     let filter = {};
 
-    // If 'all' parameter is true, bypass all filters (admin only)
     if (all === "true" && req.user.role === "admin") {
       const students = await Student.find({})
         .populate("addedBy", "name email role")
@@ -40,23 +39,19 @@ router.get("/", async (req, res) => {
       filter.addedBy = addedBy;
     }
 
-    // 🆕 For Teacher: Only show students that are assigned to this teacher AND have matching subjects
     if (req.user.role === "teacher") {
       const teacherSubjects = (req.user.subjects || []).map((s) =>
         s.trim().toUpperCase(),
       );
 
       if (teacherSubjects.length === 0) {
-        // Teacher has no subjects assigned - return empty array
         return res.json([]);
       }
 
-      // Students must be assigned to this teacher AND have at least one matching subject
       filter.teacher = req.user._id;
       filter.subjects = { $in: teacherSubjects };
     }
 
-    // If counsellor, only show their students
     if (req.user.role === "counsellor") {
       const counsellor = await User.findById(req.user._id).populate("students");
       const assignedIds = counsellor.students.map((s) => s._id);
@@ -79,8 +74,16 @@ router.get("/", async (req, res) => {
 // POST /api/students - Create a new student
 router.post("/", async (req, res) => {
   try {
-    const { name, fatherName, email, phone, subjects, totalFee, paidAmount } =
-      req.body;
+    const {
+      name,
+      fatherName,
+      email,
+      phone,
+      subjects,
+      totalFee,
+      paidAmount,
+      batchDuration,
+    } = req.body;
 
     if (!name || !fatherName || !email || !phone) {
       return res.status(400).json({
@@ -100,7 +103,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Capitalize subjects
     const capitalizedSubjects = (subjects || []).map((sub) =>
       sub.trim().toUpperCase(),
     );
@@ -115,6 +117,7 @@ router.post("/", async (req, res) => {
       email: cleanEmail,
       phone: phone.trim(),
       subjects: capitalizedSubjects,
+      batchDuration: batchDuration || "45 days",
       totalFee: total,
       paidAmount: paid,
       dueAmount: due,
@@ -164,6 +167,7 @@ router.put("/:id", async (req, res) => {
       subjects,
       totalFee,
       paidAmount,
+      batchDuration,
       counsellor,
     } = req.body;
 
@@ -193,7 +197,6 @@ router.put("/:id", async (req, res) => {
       }
     }
 
-    // Capitalize subjects
     const capitalizedSubjects = (subjects || []).map((sub) =>
       sub.trim().toUpperCase(),
     );
@@ -212,6 +215,7 @@ router.put("/:id", async (req, res) => {
         phone: phone ? phone.trim() : student.phone,
         subjects:
           subjects !== undefined ? capitalizedSubjects : student.subjects,
+        batchDuration: batchDuration || student.batchDuration || "45 days",
         totalFee: total,
         paidAmount: paid,
         dueAmount: due,
