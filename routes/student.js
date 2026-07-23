@@ -13,8 +13,7 @@ router.get("/", async (req, res) => {
     const { subject, search, addedBy, all } = req.query;
     let filter = {};
 
-    // If 'all' parameter is true, bypass all filters (admin only)
-    if (all === "true" && req.user.role === "admin") {
+    if (all === 'true' && req.user.role === 'admin') {
       const students = await Student.find({})
         .populate("addedBy", "name email role")
         .populate("counsellor", "name email")
@@ -40,23 +39,17 @@ router.get("/", async (req, res) => {
       filter.addedBy = addedBy;
     }
 
-    // 🆕 For Teacher: Only show students that are assigned to this teacher AND have matching subjects
     if (req.user.role === "teacher") {
-      const teacherSubjects = (req.user.subjects || []).map((s) =>
-        s.trim().toUpperCase(),
-      );
-
+      const teacherSubjects = (req.user.subjects || []).map(s => s.trim().toUpperCase());
+      
       if (teacherSubjects.length === 0) {
-        // Teacher has no subjects assigned - return empty array
         return res.json([]);
       }
-
-      // Students must be assigned to this teacher AND have at least one matching subject
+      
       filter.teacher = req.user._id;
       filter.subjects = { $in: teacherSubjects };
     }
 
-    // If counsellor, only show their students
     if (req.user.role === "counsellor") {
       const counsellor = await User.findById(req.user._id).populate("students");
       const assignedIds = counsellor.students.map((s) => s._id);
@@ -79,30 +72,38 @@ router.get("/", async (req, res) => {
 // POST /api/students - Create a new student
 router.post("/", async (req, res) => {
   try {
-    const { name, fatherName, email, phone, subjects, totalFee, paidAmount } =
-      req.body;
+    const {
+      name,
+      fatherName,
+      email,
+      phone,
+      subjects,
+      totalFee,
+      paidAmount,
+      batchType,
+      mode,
+    } = req.body;
 
     if (!name || !fatherName || !email || !phone) {
-      return res.status(400).json({
-        message: "Name, father's name, email, and phone are required",
+      return res.status(400).json({ 
+        message: "Name, father's name, email, and phone are required" 
       });
     }
 
     const cleanEmail = email.trim().toLowerCase();
 
-    const existing = await Student.findOne({
-      email: cleanEmail,
+    const existing = await Student.findOne({ 
+      email: cleanEmail 
     });
-
+    
     if (existing) {
-      return res.status(400).json({
-        message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.`,
+      return res.status(400).json({ 
+        message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.` 
       });
     }
 
-    // Capitalize subjects
-    const capitalizedSubjects = (subjects || []).map((sub) =>
-      sub.trim().toUpperCase(),
+    const capitalizedSubjects = (subjects || []).map(sub => 
+      sub.trim().toUpperCase()
     );
 
     const total = totalFee || 0;
@@ -115,6 +116,8 @@ router.post("/", async (req, res) => {
       email: cleanEmail,
       phone: phone.trim(),
       subjects: capitalizedSubjects,
+      batchType: batchType || "Premium",
+      mode: mode || "Online",
       totalFee: total,
       paidAmount: paid,
       dueAmount: due,
@@ -135,20 +138,20 @@ router.post("/", async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Student added successfully",
-      student,
+      student
     });
   } catch (err) {
     console.error("Error creating student:", err);
-
+    
     if (err.code === 11000) {
-      return res.status(400).json({
-        message: `Email "${req.body.email}" is already registered. Please use a different email.`,
+      return res.status(400).json({ 
+        message: `Email "${req.body.email}" is already registered. Please use a different email.` 
       });
     }
-
-    res.status(500).json({
-      message: "Server error",
-      error: err.message,
+    
+    res.status(500).json({ 
+      message: "Server error", 
+      error: err.message 
     });
   }
 });
@@ -164,6 +167,8 @@ router.put("/:id", async (req, res) => {
       subjects,
       totalFee,
       paidAmount,
+      batchType,
+      mode,
       counsellor,
     } = req.body;
 
@@ -186,21 +191,19 @@ router.put("/:id", async (req, res) => {
       if (cleanEmail !== student.email.toLowerCase()) {
         const existing = await Student.findOne({ email: cleanEmail });
         if (existing) {
-          return res.status(400).json({
-            message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.`,
+          return res.status(400).json({ 
+            message: `Email "${cleanEmail}" is already registered by student "${existing.name}". Please use a different email.` 
           });
         }
       }
     }
 
-    // Capitalize subjects
-    const capitalizedSubjects = (subjects || []).map((sub) =>
-      sub.trim().toUpperCase(),
+    const capitalizedSubjects = (subjects || []).map(sub => 
+      sub.trim().toUpperCase()
     );
 
     const total = totalFee !== undefined ? totalFee : student.totalFee || 0;
-    const paid =
-      paidAmount !== undefined ? paidAmount : student.paidAmount || 0;
+    const paid = paidAmount !== undefined ? paidAmount : student.paidAmount || 0;
     const due = total - paid;
 
     const updated = await Student.findByIdAndUpdate(
@@ -210,8 +213,9 @@ router.put("/:id", async (req, res) => {
         fatherName: fatherName ? fatherName.trim() : student.fatherName,
         email: email ? email.trim().toLowerCase() : student.email,
         phone: phone ? phone.trim() : student.phone,
-        subjects:
-          subjects !== undefined ? capitalizedSubjects : student.subjects,
+        subjects: subjects !== undefined ? capitalizedSubjects : student.subjects,
+        batchType: batchType || student.batchType || "Premium",
+        mode: mode || student.mode || "Online",
         totalFee: total,
         paidAmount: paid,
         dueAmount: due,
@@ -226,12 +230,12 @@ router.put("/:id", async (req, res) => {
     res.json({
       success: true,
       message: "Student updated successfully",
-      student: updated,
+      student: updated
     });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({
-        message: "Email already exists. Please use a different email address.",
+      return res.status(400).json({ 
+        message: "Email already exists. Please use a different email address." 
       });
     }
     console.error("Error updating student:", err);
@@ -264,9 +268,9 @@ router.delete("/:id", async (req, res) => {
       { $pull: { students: req.params.id } },
     );
 
-    res.json({
+    res.json({ 
       success: true,
-      message: "Student deleted successfully",
+      message: "Student deleted successfully" 
     });
   } catch (err) {
     console.error("Error deleting student:", err);
