@@ -81,7 +81,7 @@ router.get("/student/:id/csv", async (req, res) => {
       "Content-Disposition",
       `attachment; filename="${student.name}_data.csv"`,
     );
-    res.send(csvContent);
+    // res.send(csvContent);
   } catch (err) {
     console.error("Error exporting student CSV:", err);
     res.status(500).json({ message: "Server error" });
@@ -300,7 +300,7 @@ router.get("/all-students/csv", async (req, res) => {
       "Content-Disposition",
       `attachment; filename="all_students_data.csv"`,
     );
-    res.send(csvContent);
+    // res.send(csvContent);
   } catch (err) {
     console.error("Error exporting all students CSV:", err);
     res.status(500).json({ message: "Server error" });
