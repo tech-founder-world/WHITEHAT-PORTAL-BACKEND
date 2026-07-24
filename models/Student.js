@@ -13,7 +13,7 @@ const studentSchema = new mongoose.Schema(
     // 🆕 Single Batch Type field with ALL options
     batchType: {
       type: String,
-      enum: ["Premium", "Platinum", "Diploma", "45 days", "3 months", "4 months", "6 months"],
+      enum: ["Premium", "Regular", "Diploma", "45 days", "3 months", "4 months", "6 months"],
       default: "Premium",
     },
     // 🆕 Mode Field
