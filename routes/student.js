@@ -69,6 +69,21 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /api/students/all-subjects - Get all unique subjects from all students
+router.get("/all-subjects", async (req, res) => {
+  try {
+    const students = await Student.find({});
+    const subjectSet = new Set();
+    students.forEach((student) => {
+      student.subjects?.forEach((subject) => subjectSet.add(subject));
+    });
+    res.json([...subjectSet].sort());
+  } catch (err) {
+    console.error("Error fetching all subjects:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // POST /api/students - Create a new student
 router.post("/", async (req, res) => {
   try {
@@ -82,6 +97,7 @@ router.post("/", async (req, res) => {
       paidAmount,
       batchType,
       mode,
+      counsellor,
     } = req.body;
 
     if (!name || !fatherName || !email || !phone) {
@@ -110,26 +126,46 @@ router.post("/", async (req, res) => {
     const paid = paidAmount || 0;
     const due = total - paid;
 
+    // Determine counsellor - use provided or set based on role
+    let counsellorId = counsellor || null;
+    if (req.user.role === "counsellor" && !counsellorId) {
+      counsellorId = req.user._id;
+    }
+
     const student = await Student.create({
       name: name.trim(),
       fatherName: fatherName.trim(),
       email: cleanEmail,
       phone: phone.trim(),
       subjects: capitalizedSubjects,
-      batchType: batchType || "Premium",
+      batchType: batchType || "Premium" ,
       mode: mode || "Online",
       totalFee: total,
       paidAmount: paid,
       dueAmount: due,
       addedBy: req.user._id,
       addedByRole: req.user.role,
-      counsellor: req.user.role === "counsellor" ? req.user._id : null,
+      counsellor: counsellorId,
     });
 
+    // IMPORTANT: Add student to counsellor's students array
+    if (counsellorId) {
+      await User.findByIdAndUpdate(
+        counsellorId, 
+        { 
+          $addToSet: { students: student._id } 
+        }
+      );
+    }
+
+    // If counsellor is creating, also add to their list
     if (req.user.role === "counsellor") {
-      await User.findByIdAndUpdate(req.user._id, {
-        $addToSet: { students: student._id },
-      });
+      await User.findByIdAndUpdate(
+        req.user._id, 
+        { 
+          $addToSet: { students: student._id } 
+        }
+      );
     }
 
     await student.populate("addedBy", "name email role");
@@ -206,6 +242,28 @@ router.put("/:id", async (req, res) => {
     const paid = paidAmount !== undefined ? paidAmount : student.paidAmount || 0;
     const due = total - paid;
 
+    // Handle counsellor change - remove from old, add to new
+    const oldCounsellorId = student.counsellor?.toString();
+    const newCounsellorId = counsellor;
+
+    if (newCounsellorId !== oldCounsellorId) {
+      // Remove from old counsellor's list
+      if (oldCounsellorId) {
+        await User.findByIdAndUpdate(
+          oldCounsellorId,
+          { $pull: { students: student._id } }
+        );
+      }
+      
+      // Add to new counsellor's list
+      if (newCounsellorId) {
+        await User.findByIdAndUpdate(
+          newCounsellorId,
+          { $addToSet: { students: student._id } }
+        );
+      }
+    }
+
     const updated = await Student.findByIdAndUpdate(
       req.params.id,
       {
@@ -214,12 +272,12 @@ router.put("/:id", async (req, res) => {
         email: email ? email.trim().toLowerCase() : student.email,
         phone: phone ? phone.trim() : student.phone,
         subjects: subjects !== undefined ? capitalizedSubjects : student.subjects,
-        batchType: batchType || student.batchType || "Premium",
+        batchType: batchType || student.batchType ,
         mode: mode || student.mode || "Online",
         totalFee: total,
         paidAmount: paid,
         dueAmount: due,
-        counsellor: counsellor !== undefined ? counsellor : student.counsellor,
+        counsellor: newCounsellorId,
       },
       { new: true, runValidators: true },
     )
@@ -260,6 +318,22 @@ router.delete("/:id", async (req, res) => {
         .json({ message: "You can only delete students you added" });
     }
 
+    // Remove student from counsellor's list
+    if (student.counsellor) {
+      await User.findByIdAndUpdate(
+        student.counsellor,
+        { $pull: { students: student._id } }
+      );
+    }
+
+    // Remove student from teacher's list
+    if (student.teacher) {
+      await User.findByIdAndUpdate(
+        student.teacher,
+        { $pull: { students: student._id } }
+      );
+    }
+
     await Student.findByIdAndDelete(req.params.id);
     await Attendance.deleteMany({ student: req.params.id });
 
@@ -274,17 +348,6 @@ router.delete("/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("Error deleting student:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// GET /api/students/subjects - Get all unique subjects
-router.get("/all-subjects", async (req, res) => {
-  try {
-    const result = await Student.distinct("subjects");
-    res.json(result.filter(Boolean).sort());
-  } catch (err) {
-    console.error("Error fetching subjects:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
