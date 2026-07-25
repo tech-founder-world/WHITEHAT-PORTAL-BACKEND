@@ -87,6 +87,8 @@ router.get("/all-subjects", async (req, res) => {
 // POST /api/students - Create a new student
 router.post("/", async (req, res) => {
   try {
+    console.log("📥 Received POST request body:", req.body);
+    
     const {
       name,
       fatherName,
@@ -98,7 +100,22 @@ router.post("/", async (req, res) => {
       batchType,
       mode,
       counsellor,
+      joiningDate,
+      duration,
     } = req.body;
+
+    console.log("📋 Extracted values:", {
+      name,
+      fatherName,
+      email,
+      phone,
+      subjects,
+      batchType,
+      mode,
+      counsellor,
+      joiningDate: joiningDate || "NOT PROVIDED",
+      duration: duration || "NOT PROVIDED"
+    });
 
     if (!name || !fatherName || !email || !phone) {
       return res.status(400).json({ 
@@ -132,13 +149,29 @@ router.post("/", async (req, res) => {
       counsellorId = req.user._id;
     }
 
-    const student = await Student.create({
+    // Parse joining date if provided
+    let parsedJoiningDate = null;
+    if (joiningDate) {
+      parsedJoiningDate = new Date(joiningDate);
+      if (isNaN(parsedJoiningDate.getTime())) {
+        console.warn("⚠️ Invalid joining date, using current date");
+        parsedJoiningDate = new Date(); // Default to today if invalid
+      }
+    } else {
+      // If no joining date provided, use current date
+      parsedJoiningDate = new Date();
+    }
+    
+    console.log("📅 Parsed joining date:", parsedJoiningDate);
+
+    // Create student with all fields
+    const studentData = {
       name: name.trim(),
       fatherName: fatherName.trim(),
       email: cleanEmail,
       phone: phone.trim(),
       subjects: capitalizedSubjects,
-      batchType: batchType || "Premium" ,
+      batchType: batchType || "Premium",
       mode: mode || "Online",
       totalFee: total,
       paidAmount: paid,
@@ -146,7 +179,13 @@ router.post("/", async (req, res) => {
       addedBy: req.user._id,
       addedByRole: req.user.role,
       counsellor: counsellorId,
-    });
+      joiningDate: parsedJoiningDate,
+      duration: duration || "", // Make sure duration is saved as string
+    };
+
+    console.log("💾 Student data to save:", studentData);
+
+    const student = await Student.create(studentData);
 
     // IMPORTANT: Add student to counsellor's students array
     if (counsellorId) {
@@ -171,13 +210,15 @@ router.post("/", async (req, res) => {
     await student.populate("addedBy", "name email role");
     await student.populate("counsellor", "name email");
 
+    console.log("✅ Created student:", student);
+
     res.status(201).json({
       success: true,
       message: "Student added successfully",
       student
     });
   } catch (err) {
-    console.error("Error creating student:", err);
+    console.error("❌ Error creating student:", err);
     
     if (err.code === 11000) {
       return res.status(400).json({ 
@@ -195,6 +236,8 @@ router.post("/", async (req, res) => {
 // PUT /api/students/:id - Update student
 router.put("/:id", async (req, res) => {
   try {
+    console.log("📥 Received PUT request body:", req.body);
+    
     const {
       name,
       fatherName,
@@ -206,7 +249,23 @@ router.put("/:id", async (req, res) => {
       batchType,
       mode,
       counsellor,
+      joiningDate,
+      duration,
     } = req.body;
+
+    console.log("📋 Update values:", {
+      id: req.params.id,
+      name,
+      fatherName,
+      email,
+      phone,
+      subjects,
+      batchType,
+      mode,
+      counsellor,
+      joiningDate: joiningDate || "NOT PROVIDED",
+      duration: duration || "NOT PROVIDED"
+    });
 
     const student = await Student.findById(req.params.id);
     if (!student) {
@@ -244,7 +303,7 @@ router.put("/:id", async (req, res) => {
 
     // Handle counsellor change - remove from old, add to new
     const oldCounsellorId = student.counsellor?.toString();
-    const newCounsellorId = counsellor;
+    const newCounsellorId = counsellor !== undefined ? counsellor : student.counsellor?.toString();
 
     if (newCounsellorId !== oldCounsellorId) {
       // Remove from old counsellor's list
@@ -264,26 +323,49 @@ router.put("/:id", async (req, res) => {
       }
     }
 
+    // Parse joining date if provided
+    let parsedJoiningDate = student.joiningDate;
+    if (joiningDate !== undefined) {
+      if (joiningDate) {
+        parsedJoiningDate = new Date(joiningDate);
+        if (isNaN(parsedJoiningDate.getTime())) {
+          parsedJoiningDate = student.joiningDate; // Keep existing if invalid
+        }
+      } else {
+        parsedJoiningDate = null;
+      }
+    }
+    
+    console.log("📅 Parsed joining date for update:", parsedJoiningDate);
+
+    const updateData = {
+      name: name !== undefined ? name.trim() : student.name,
+      fatherName: fatherName !== undefined ? fatherName.trim() : student.fatherName,
+      email: email !== undefined ? email.trim().toLowerCase() : student.email,
+      phone: phone !== undefined ? phone.trim() : student.phone,
+      subjects: subjects !== undefined ? capitalizedSubjects : student.subjects,
+      batchType: batchType !== undefined ? batchType : student.batchType,
+      mode: mode !== undefined ? mode : student.mode || "Online",
+      totalFee: total,
+      paidAmount: paid,
+      dueAmount: due,
+      counsellor: newCounsellorId || null,
+      joiningDate: parsedJoiningDate,
+      duration: duration !== undefined ? duration : student.duration || "",
+    };
+
+    console.log("💾 Update data:", updateData);
+
     const updated = await Student.findByIdAndUpdate(
       req.params.id,
-      {
-        name: name ? name.trim() : student.name,
-        fatherName: fatherName ? fatherName.trim() : student.fatherName,
-        email: email ? email.trim().toLowerCase() : student.email,
-        phone: phone ? phone.trim() : student.phone,
-        subjects: subjects !== undefined ? capitalizedSubjects : student.subjects,
-        batchType: batchType || student.batchType ,
-        mode: mode || student.mode || "Online",
-        totalFee: total,
-        paidAmount: paid,
-        dueAmount: due,
-        counsellor: newCounsellorId,
-      },
+      updateData,
       { new: true, runValidators: true },
     )
       .populate("addedBy", "name email role")
       .populate("counsellor", "name email")
       .populate("teacher", "name email subjects");
+
+    console.log("✅ Updated student:", updated);
 
     res.json({
       success: true,
@@ -296,7 +378,7 @@ router.put("/:id", async (req, res) => {
         message: "Email already exists. Please use a different email address." 
       });
     }
-    console.error("Error updating student:", err);
+    console.error("❌ Error updating student:", err);
     res.status(500).json({ message: "Server error" });
   }
 });

@@ -10,13 +10,11 @@ const studentSchema = new mongoose.Schema(
     subjects: [{ type: String, trim: true }],
     projects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Project" }],
     batches: [{ type: mongoose.Schema.Types.ObjectId, ref: "Batch" }],
-    // 🆕 Single Batch Type field with ALL options
     batchType: {
       type: String,
       enum: ["Premium", "Regular", "Diploma", "45 days", "3 months", "4 months", "6 months"],
       default: "Premium",
     },
-    // 🆕 Mode Field
     mode: {
       type: String,
       enum: ["Online", "Offline"],
@@ -37,6 +35,8 @@ const studentSchema = new mongoose.Schema(
     },
     counsellor: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     teacher: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    joiningDate: { type: Date, default: null },
+    duration: { type: String, default: "" },
   },
   { timestamps: true },
 );
