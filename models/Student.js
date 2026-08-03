@@ -12,7 +12,7 @@ const studentSchema = new mongoose.Schema(
     batches: [{ type: mongoose.Schema.Types.ObjectId, ref: "Batch" }],
     batchType: {
       type: String,
-      enum: ["Premium", "Regular", "Diploma", "45 days", "3 months", "4 months", "6 months"],
+      enum: ["Premium","Platinum", "Regular", "Diploma", "45 days", "3 months", "4 months", "6 months"],
       default: "Premium",
     },
     mode: {
