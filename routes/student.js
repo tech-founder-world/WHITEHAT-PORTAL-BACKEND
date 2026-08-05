@@ -7,6 +7,7 @@ const { protect } = require("../middleware/auth");
 
 router.use(protect);
 
+
 // GET /api/students - Get all students with filters
 router.get("/", async (req, res) => {
   try {
@@ -23,7 +24,7 @@ router.get("/", async (req, res) => {
     }
 
     if (subject) {
-      filter.subjects = subject;
+      filter.subjects = { $in: [subject] };
     }
 
     if (search) {
@@ -46,8 +47,15 @@ router.get("/", async (req, res) => {
         return res.json([]);
       }
       
+      // CRITICAL FIX: Teacher must be assigned to the student AND subject must match
       filter.teacher = req.user._id;
-      filter.subjects = { $in: teacherSubjects };
+      
+      // If subject is specified, only return students with that subject
+      if (subject) {
+        filter.subjects = { $in: [subject] };
+      } else {
+        filter.subjects = { $in: teacherSubjects };
+      }
     }
 
     if (req.user.role === "counsellor") {
