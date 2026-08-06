@@ -32,7 +32,7 @@ const batchSchema = new mongoose.Schema(
     // THESE FIELDS ARE CRUCIAL
     category: {
       type: String,
-      enum: ["silver", "platinum", "premium", "custom"],
+      enum: ["regular", "platinum", "premium", "custom"],
       default: "custom",
     },
     duration: { 
