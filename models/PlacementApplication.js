@@ -15,7 +15,7 @@ const placementApplicationSchema = new mongoose.Schema({
   studentEmail: { type: String, required: true, lowercase: true, trim: true },
   studentPhone: { type: String, required: true, trim: true },
   fatherName: { type: String, trim: true },
-  courseType: { type: String, enum: ['Silver', 'Platinum', 'Premium'], default: 'Silver' },
+  courseType: { type: String, enum: ['Regular', 'Platinum', 'Premium'], default: 'Regular' },
   courseTiming: { type: String, trim: true },
   resumeLink: { type: String, trim: true },
   

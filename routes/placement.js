@@ -271,7 +271,7 @@ router.post('/public/submit', async (req, res) => {
       studentEmail: studentEmail.toLowerCase(),
       studentPhone,
       fatherName: fatherName || '',
-      courseType: courseType || 'Silver',
+      courseType: courseType || 'Regular',
       courseTiming: courseTiming || '',
       resumeLink: resumeLink || '',
       status: 'pending'
