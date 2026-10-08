@@ -191,7 +191,7 @@ router.post("/", async (req, res) => {
       duration: duration || "", // Make sure duration is saved as string
     };
 
-    console.log("💾 Student data to save:", studentData);
+    console.log("💾 Student data to save:", );
 
     const student = await Student.create(studentData);
 
@@ -218,7 +218,7 @@ router.post("/", async (req, res) => {
     await student.populate("addedBy", "name email role");
     await student.populate("counsellor", "name email");
 
-    console.log("✅ Created student:", student);
+    console.log("✅ Created student:", );
 
     res.status(201).json({
       success: true,
